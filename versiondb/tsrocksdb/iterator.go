@@ -3,6 +3,7 @@ package tsrocksdb
 import (
 	"bytes"
 	"encoding/binary"
+	"sync"
 
 	"github.com/initia-labs/store/versiondb"
 	"github.com/linxGnu/grocksdb"
@@ -165,8 +166,14 @@ func (itr *rocksDBIterator) Error() error {
 
 // Close implements Iterator.
 func (itr *rocksDBIterator) Close() error {
-	itr.readOpts.Destroy()
-	itr.source.Close()
+	sync.OnceFunc(func() {
+		if itr.readOpts != nil {
+			itr.readOpts.Destroy()
+		}
+		if itr.source != nil {
+			itr.source.Close()
+		}
+	})
 	return nil
 }
 
