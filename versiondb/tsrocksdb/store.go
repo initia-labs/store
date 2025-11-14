@@ -181,10 +181,9 @@ func (s Store) iteratorAtVersion(storeKey string, start, end []byte, version *in
 	prefix := storePrefix(storeKey)
 	start, end = iterateWithPrefix(prefix, start, end)
 
-	readOpts := newTSReadOptionsForIter(version, start, end)
-	defer readOpts.Destroy()
+	readOpts := newTSReadOptions(version)
 	itr := s.db.NewIteratorCF(readOpts, s.cfHandle)
-	return newRocksDBIterator(itr, prefix, start, end, reverse, s.skipVersionZero), nil
+	return newRocksDBIterator(itr, readOpts, prefix, start, end, reverse, s.skipVersionZero), nil
 }
 
 // FeedChangeSet is used to migrate legacy change sets into versiondb
@@ -371,13 +370,6 @@ func newTSReadOptions(version *int64) *grocksdb.ReadOptions {
 	return readOpts
 }
 
-func newTSReadOptionsForIter(version *int64, start, end []byte) *grocksdb.ReadOptions {
-	readOpts := newTSReadOptions(version)
-	readOpts.SetIterateLowerBound(start)
-	readOpts.SetIterateUpperBound(end)
-	return readOpts
-}
-
 func storePrefix(storeKey string) []byte {
 	return []byte(fmt.Sprintf(StorePrefixTpl, storeKey))
 }
@@ -418,7 +410,7 @@ func cpIncr(bz []byte) (ret []byte) {
 	return nil
 }
 
-// iterateWithPrefix calculate the acual iterate range
+// iterateWithPrefix calculate the actual iterate range
 func iterateWithPrefix(prefix, begin, end []byte) ([]byte, []byte) {
 	if len(prefix) == 0 {
 		return begin, end
