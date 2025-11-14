@@ -9,7 +9,9 @@ import (
 )
 
 type rocksDBIterator struct {
-	source             *grocksdb.Iterator
+	source   *grocksdb.Iterator
+	readOpts *grocksdb.ReadOptions
+
 	prefix, start, end []byte
 	isReverse          bool
 	isInvalid          bool
@@ -20,7 +22,12 @@ type rocksDBIterator struct {
 
 var _ versiondb.Iterator = (*rocksDBIterator)(nil)
 
-func newRocksDBIterator(source *grocksdb.Iterator, prefix, start, end []byte, isReverse, skipVersionZero bool) *rocksDBIterator {
+func newRocksDBIterator(
+	source *grocksdb.Iterator,
+	readOpts *grocksdb.ReadOptions,
+	prefix, start, end []byte,
+	isReverse, skipVersionZero bool,
+) *rocksDBIterator {
 	if isReverse {
 		if end == nil {
 			source.SeekToLast()
@@ -45,6 +52,7 @@ func newRocksDBIterator(source *grocksdb.Iterator, prefix, start, end []byte, is
 	}
 	it := &rocksDBIterator{
 		source:          source,
+		readOpts:        readOpts,
 		prefix:          prefix,
 		start:           start,
 		end:             end,
@@ -157,6 +165,7 @@ func (itr *rocksDBIterator) Error() error {
 
 // Close implements Iterator.
 func (itr *rocksDBIterator) Close() error {
+	itr.readOpts.Destroy()
 	itr.source.Close()
 	return nil
 }
