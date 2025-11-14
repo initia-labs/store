@@ -10,3 +10,16 @@ test-versiondb:
 	@cd versiondb; go test -tags=rocksdb -v -mod=readonly ./...;
 
 .PHONY: test test-memiavl test-store test-versiondb
+
+###############################################################################
+###                                Linting                                  ###
+###############################################################################
+
+lint:
+	golangci-lint run --timeout=15m --tests=false
+
+lint-fix:
+	golangci-lint run --fix --timeout=15m --tests=false
+
+.PHONY: lint lint-fix
+
