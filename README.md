@@ -1,5 +1,7 @@
 # Store
 
+This repository started as a fork of the [`crypto-org-chain/cronos`](https://github.com/crypto-org-chain/cronos) store utilities.
+
 This repository hosts Initia's data-store components:
 
 - **MemIAVL** – an alternative in-memory snapshot-backed IAVL implementation that the consensus state machine uses in place of the legacy `application.db`.
