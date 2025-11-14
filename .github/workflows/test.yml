@@ -32,7 +32,7 @@ jobs:
             **/**.go
             go.mod
             go.sum
-      - uses: initia-labs/install-rocksdb@v1.1
+      - uses: initia-labs/install-rocksdb@v1.2
       - name: test
         run: |
           make test
