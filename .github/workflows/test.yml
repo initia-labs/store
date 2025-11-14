@@ -26,7 +26,20 @@ jobs:
       - uses: actions/setup-go@v3
         with:
           go-version: 1.23
+      - name: Cache RocksDB shared v10.5.1
+        id: cache-rocksdb-shared
+        uses: actions/cache@v3
+        with:
+          path: |
+            /usr/local/lib/librocksdb.so.10.5.1
+            /usr/local/lib/librocksdb.so.10.5
+            /usr/local/lib/librocksdb.so.10
+            /usr/local/lib/librocksdb.so
+            /usr/local/include/rocksdb
+            /usr/local/lib/pkgconfig/rocksdb.pc
+          key: rocksdb-cloud-shared-v10.5.1-${{ runner.os }}
       - name: Install RocksDB v10.5.1
+        if: steps.cache-rocksdb-shared.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev
@@ -34,6 +47,8 @@ jobs:
           cd /tmp/rocksdb
           make shared_lib -j"$(nproc)" PORTABLE=1
           sudo make install-shared
+      - name: Refresh ldconfig
+        run: sudo ldconfig
       - uses: actions/checkout@v5
       - uses: technote-space/get-diff-action@v4
         with:
