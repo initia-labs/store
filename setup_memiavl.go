@@ -13,7 +13,7 @@ import (
 
 	"github.com/initia-labs/store/config"
 	"github.com/initia-labs/store/memiavl"
-	"github.com/initia-labs/store/rootmulti"
+	"github.com/initia-labs/store/memiavl/rootmulti"
 )
 
 // SetupMemIAVL insert the memiavl setter in front of baseapp options, so that

@@ -19,8 +19,8 @@ import (
 	dbm "github.com/cosmos/cosmos-db"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 
-	"github.com/initia-labs/store/cachemulti"
 	"github.com/initia-labs/store/memiavl"
+	"github.com/initia-labs/store/memiavl/cachemulti"
 )
 
 const CommitInfoFileName = "commit_infos"
@@ -46,10 +46,12 @@ type Store struct {
 	supportExportNonSnapshotVersion bool
 
 	opts memiavl.Options
+
+	queryCache *queryDBCache
 }
 
 func NewStore(dir string, logger log.Logger, supportExportNonSnapshotVersion bool) *Store {
-	return &Store{
+	store := &Store{
 		dir:    dir,
 		logger: logger,
 
@@ -60,6 +62,8 @@ func NewStore(dir string, logger log.Logger, supportExportNonSnapshotVersion boo
 
 		supportExportNonSnapshotVersion: supportExportNonSnapshotVersion,
 	}
+	store.queryCache = newQueryDBCache(store)
+	return store
 }
 
 // flush writes all the pending change sets to memiavl tree.
@@ -122,10 +126,12 @@ func (rs *Store) Commit() types.CommitID {
 	}
 
 	rs.lastCommitInfo = convertCommitInfo(rs.db.LastCommitInfo())
+	rs.queryCache.AddLiveVersion(rs.db, rs.lastCommitInfo.Version)
 	return rs.lastCommitInfo.CommitID()
 }
 
 func (rs *Store) Close() error {
+	rs.queryCache.Close()
 	return rs.db.Close()
 }
 
@@ -190,15 +196,31 @@ func (rs *Store) CacheMultiStore() types.CacheMultiStore {
 // CacheMultiStoreWithVersion Implements interface MultiStore
 // used to createQueryContext, abci_query or grpc query service.
 func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStore, error) {
-	if version == 0 || (rs.lastCommitInfo != nil && version == rs.lastCommitInfo.Version) {
-		return rs.CacheMultiStore(), nil
+	if version > math.MaxUint32 {
+		return nil, fmt.Errorf("version overflows uint32: %d", version)
 	}
-	opts := rs.opts
-	opts.TargetVersion = uint32(version)
-	opts.ReadOnly = true
-	db, err := memiavl.Load(rs.dir, opts)
-	if err != nil {
-		return nil, err
+
+	if version == 0 {
+		if rs.lastCommitInfo != nil {
+			version = rs.lastCommitInfo.Version
+		} else {
+			version = rs.db.Version()
+		}
+	}
+
+	var (
+		db        *memiavl.DB
+		err       error
+		liveTrees map[string]*memiavl.Tree
+		ok        bool
+	)
+
+	liveTrees, ok = rs.queryCache.GetLiveTrees(version)
+	if !ok {
+		db, err = rs.queryCache.GetOrLoad(version)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	stores := make(map[types.StoreKey]types.CacheWrapper)
@@ -211,8 +233,22 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 	}
 
 	// add all the iavl stores at the target version.
-	for _, tree := range db.Trees() {
-		stores[rs.keysByName[tree.Name]] = memiavl.NewStore(tree.Tree, rs.logger)
+	if liveTrees != nil {
+		for name, tree := range liveTrees {
+			key, ok := rs.keysByName[name]
+			if !ok {
+				return nil, fmt.Errorf("unknown store key: %s", name)
+			}
+			stores[key] = memiavl.NewStore(tree, rs.logger)
+		}
+	} else {
+		for _, tree := range db.Trees() {
+			key, ok := rs.keysByName[tree.Name]
+			if !ok {
+				return nil, fmt.Errorf("unknown store key: %s", tree.Name)
+			}
+			stores[key] = memiavl.NewStore(tree.Tree, rs.logger)
+		}
 	}
 
 	return cachemulti.NewStore(stores, nil, nil, nil), nil
@@ -314,6 +350,8 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 		return fmt.Errorf("version overflows uint32: %d", version)
 	}
 
+	rs.queryCache.Reset()
+
 	storesKeys := make([]types.StoreKey, 0, len(rs.storesParams))
 	for key := range rs.storesParams {
 		storesKeys = append(storesKeys, key)
@@ -373,6 +411,9 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 		rs.lastCommitInfo = convertCommitInfo(db.LastCommitInfo())
 	} else {
 		rs.lastCommitInfo = &types.CommitInfo{}
+	}
+	if rs.lastCommitInfo.Version > 0 {
+		rs.queryCache.AddLiveVersion(rs.db, rs.lastCommitInfo.Version)
 	}
 
 	return nil
