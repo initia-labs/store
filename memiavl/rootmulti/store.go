@@ -126,7 +126,10 @@ func (rs *Store) Commit() types.CommitID {
 	}
 
 	rs.lastCommitInfo = convertCommitInfo(rs.db.LastCommitInfo())
-	rs.queryCache.AddLiveVersion(rs.db, rs.lastCommitInfo.Version)
+
+	// add the committed version into historical query cache
+	rs.queryCache.AddHistoricalVersion(rs.db, rs.lastCommitInfo.Version)
+
 	return rs.lastCommitInfo.CommitID()
 }
 
@@ -208,19 +211,9 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 		}
 	}
 
-	var (
-		db        *memiavl.DB
-		err       error
-		liveTrees map[string]*memiavl.Tree
-		ok        bool
-	)
-
-	liveTrees, ok = rs.queryCache.GetLiveTrees(version)
+	historicalTrees, ok := rs.queryCache.GetHistoricalTrees(version)
 	if !ok {
-		db, err = rs.queryCache.GetOrLoad(version)
-		if err != nil {
-			return nil, err
-		}
+		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
 	}
 
 	stores := make(map[types.StoreKey]types.CacheWrapper)
@@ -233,22 +226,12 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 	}
 
 	// add all the iavl stores at the target version.
-	if liveTrees != nil {
-		for name, tree := range liveTrees {
-			key, ok := rs.keysByName[name]
-			if !ok {
-				return nil, fmt.Errorf("unknown store key: %s", name)
-			}
-			stores[key] = memiavl.NewStore(tree, rs.logger)
+	for name, tree := range historicalTrees {
+		key, ok := rs.keysByName[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown store key: %s", name)
 		}
-	} else {
-		for _, tree := range db.Trees() {
-			key, ok := rs.keysByName[tree.Name]
-			if !ok {
-				return nil, fmt.Errorf("unknown store key: %s", tree.Name)
-			}
-			stores[key] = memiavl.NewStore(tree.Tree, rs.logger)
-		}
+		stores[key] = memiavl.NewStore(tree, rs.logger)
 	}
 
 	return cachemulti.NewStore(stores, nil, nil, nil), nil
@@ -413,7 +396,7 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 		rs.lastCommitInfo = &types.CommitInfo{}
 	}
 	if rs.lastCommitInfo.Version > 0 {
-		rs.queryCache.AddLiveVersion(rs.db, rs.lastCommitInfo.Version)
+		rs.queryCache.AddHistoricalVersion(rs.db, rs.lastCommitInfo.Version)
 	}
 
 	return nil
@@ -485,7 +468,19 @@ func (rs *Store) SetMemIAVLOptions(opts memiavl.Options) {
 	if opts.Logger == nil {
 		opts.Logger = memiavl.Logger(rs.logger.With("module", "memiavl"))
 	}
+	clampHistoricalCacheOptions(&opts)
 	rs.opts = opts
+}
+
+func clampHistoricalCacheOptions(opts *memiavl.Options) {
+	maxInterval := int(opts.SnapshotInterval)
+	if maxInterval <= 0 {
+		maxInterval = memiavl.DefaultSnapshotInterval
+	}
+
+	if opts.HistoricalQueryCacheSize <= 0 || opts.HistoricalQueryCacheSize > maxInterval {
+		opts.HistoricalQueryCacheSize = maxInterval
+	}
 }
 
 // RollbackToVersion delete the versions after `target` and update the latest version.

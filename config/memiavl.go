@@ -12,16 +12,18 @@ const (
 	DefaultMemIAVLCacheSize          = 1000
 	DefaultMemIAVLAsyncCommitBuffer  = 10
 	DefaultMemIAVLSnapshotKeepRecent = 1
+	DefaultHistoricalQueryCacheSize  = 0 // 0 means follow snapshot interval
 )
 
 const (
-	flagMemIAVLEnable              = "memiavl.enable"
-	flagMemIAVLAsyncCommitBuffer   = "memiavl.async-commit-buffer"
-	flagMemIAVLZeroCopy            = "memiavl.zero-copy"
-	flagMemIAVLSnapshotKeepRecent  = "memiavl.snapshot-keep-recent"
-	flagMemIAVLSnapshotInterval    = "memiavl.snapshot-interval"
-	flagMemIAVLCacheSize           = "memiavl.cache-size"
-	flagMemIAVLSnapshotWriterLimit = "memiavl.snapshot-writer-limit"
+	flagMemIAVLEnable                   = "memiavl.enable"
+	flagMemIAVLAsyncCommitBuffer        = "memiavl.async-commit-buffer"
+	flagMemIAVLZeroCopy                 = "memiavl.zero-copy"
+	flagMemIAVLSnapshotKeepRecent       = "memiavl.snapshot-keep-recent"
+	flagMemIAVLSnapshotInterval         = "memiavl.snapshot-interval"
+	flagMemIAVLCacheSize                = "memiavl.cache-size"
+	flagMemIAVLSnapshotWriterLimit      = "memiavl.snapshot-writer-limit"
+	flagMemIAVLHistoricalQueryCacheSize = "memiavl.historical-query-cache-size"
 )
 
 // MemIAVLConfig defines the configuration for the memiavl store.
@@ -44,31 +46,35 @@ type MemIAVLConfig struct {
 	SnapshotWriterLimit int `mapstructure:"snapshot-writer-limit"`
 	// CacheSize defines the size of the cache for each memiavl store.
 	CacheSize int `mapstructure:"cache-size"`
+	// HistoricalQueryCacheSize limits how many recent versions are kept in the in-memory historical query cache.
+	HistoricalQueryCacheSize int `mapstructure:"historical-query-cache-size"`
 }
 
 // DefaultMemIAVLConfig returns the default memiavl configuration.
 func DefaultMemIAVLConfig() MemIAVLConfig {
 	return MemIAVLConfig{
-		Enable:              false,
-		ZeroCopy:            false,
-		AsyncCommitBuffer:   DefaultMemIAVLAsyncCommitBuffer,
-		SnapshotKeepRecent:  DefaultMemIAVLSnapshotKeepRecent,
-		SnapshotInterval:    memiavl.DefaultSnapshotInterval,
-		SnapshotWriterLimit: memiavl.DefaultSnapshotWriterLimit,
-		CacheSize:           DefaultMemIAVLCacheSize,
+		Enable:                   false,
+		ZeroCopy:                 false,
+		AsyncCommitBuffer:        DefaultMemIAVLAsyncCommitBuffer,
+		SnapshotKeepRecent:       DefaultMemIAVLSnapshotKeepRecent,
+		SnapshotInterval:         memiavl.DefaultSnapshotInterval,
+		SnapshotWriterLimit:      memiavl.DefaultSnapshotWriterLimit,
+		CacheSize:                DefaultMemIAVLCacheSize,
+		HistoricalQueryCacheSize: DefaultHistoricalQueryCacheSize,
 	}
 }
 
 // GetConfig load config values from the app options
 func GetMemIAVLConfig(appOpts servertypes.AppOptions) MemIAVLConfig {
 	return MemIAVLConfig{
-		Enable:              cast.ToBool(appOpts.Get(flagMemIAVLEnable)),
-		ZeroCopy:            cast.ToBool(appOpts.Get(flagMemIAVLZeroCopy)),
-		AsyncCommitBuffer:   cast.ToInt(appOpts.Get(flagMemIAVLAsyncCommitBuffer)),
-		SnapshotKeepRecent:  cast.ToUint32(appOpts.Get(flagMemIAVLSnapshotKeepRecent)),
-		SnapshotInterval:    cast.ToUint32(appOpts.Get(flagMemIAVLSnapshotInterval)),
-		SnapshotWriterLimit: cast.ToInt(appOpts.Get(flagMemIAVLSnapshotWriterLimit)),
-		CacheSize:           cast.ToInt(appOpts.Get(flagMemIAVLCacheSize)),
+		Enable:                   cast.ToBool(appOpts.Get(flagMemIAVLEnable)),
+		ZeroCopy:                 cast.ToBool(appOpts.Get(flagMemIAVLZeroCopy)),
+		AsyncCommitBuffer:        cast.ToInt(appOpts.Get(flagMemIAVLAsyncCommitBuffer)),
+		SnapshotKeepRecent:       cast.ToUint32(appOpts.Get(flagMemIAVLSnapshotKeepRecent)),
+		SnapshotInterval:         cast.ToUint32(appOpts.Get(flagMemIAVLSnapshotInterval)),
+		SnapshotWriterLimit:      cast.ToInt(appOpts.Get(flagMemIAVLSnapshotWriterLimit)),
+		CacheSize:                cast.ToInt(appOpts.Get(flagMemIAVLCacheSize)),
+		HistoricalQueryCacheSize: cast.ToInt(appOpts.Get(flagMemIAVLHistoricalQueryCacheSize)),
 	}
 }
 
@@ -81,6 +87,7 @@ func AddMemIAVLConfigFlags(startCmd *cobra.Command) {
 	startCmd.Flags().Uint32(flagMemIAVLSnapshotInterval, memiavl.DefaultSnapshotInterval, "Block interval the memiavl snapshot is taken")
 	startCmd.Flags().Int(flagMemIAVLSnapshotWriterLimit, memiavl.DefaultSnapshotWriterLimit, "Maximum number of concurrent memiavl snapshot writers")
 	startCmd.Flags().Int(flagMemIAVLCacheSize, DefaultMemIAVLCacheSize, "Size of the cache for each memiavl store")
+	startCmd.Flags().Int(flagMemIAVLHistoricalQueryCacheSize, DefaultHistoricalQueryCacheSize, "Number of recent versions to retain in the in-memory historical query cache (0 follows snapshot interval)")
 }
 
 // DefaultMemIAVLConfigTemplate defines the configuration template for the memiavl configuration
@@ -116,4 +123,8 @@ snapshot-writer-limit = {{ .MemIAVL.SnapshotWriterLimit }}
 
 # CacheSize defines the size of the cache for each memiavl store, default to 1000.
 cache-size = {{ .MemIAVL.CacheSize }}
+
+# HistoricalQueryCacheSize defines how many recent versions are retained for in-memory historical queries.
+# Values greater than snapshot-interval are clamped to snapshot-interval. Set to 0 to follow snapshot-interval.
+historical-query-cache-size = {{ .MemIAVL.HistoricalQueryCacheSize }}
 `

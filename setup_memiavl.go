@@ -26,12 +26,13 @@ func SetupMemIAVL(
 ) []func(*baseapp.BaseApp) {
 	if memIAVLConfig := config.GetMemIAVLConfig(appOpts); memIAVLConfig.Enable {
 		opts := memiavl.Options{
-			AsyncCommitBuffer:   memIAVLConfig.AsyncCommitBuffer,
-			ZeroCopy:            memIAVLConfig.ZeroCopy,
-			SnapshotKeepRecent:  memIAVLConfig.SnapshotKeepRecent,
-			SnapshotInterval:    memIAVLConfig.SnapshotInterval,
-			CacheSize:           memIAVLConfig.CacheSize,
-			SnapshotWriterLimit: memIAVLConfig.SnapshotWriterLimit,
+			AsyncCommitBuffer:        memIAVLConfig.AsyncCommitBuffer,
+			ZeroCopy:                 memIAVLConfig.ZeroCopy,
+			SnapshotKeepRecent:       memIAVLConfig.SnapshotKeepRecent,
+			SnapshotInterval:         memIAVLConfig.SnapshotInterval,
+			CacheSize:                memIAVLConfig.CacheSize,
+			SnapshotWriterLimit:      memIAVLConfig.SnapshotWriterLimit,
+			HistoricalQueryCacheSize: memIAVLConfig.HistoricalQueryCacheSize,
 		}
 
 		if opts.ZeroCopy {
