@@ -31,6 +31,14 @@ func (rs *Store) Restore(
 		return types.SnapshotItem{}, err
 	}
 
+	// remove snapshots older than the restored height
+	if err := memiavl.ClearSnapshotsBefore(rs.dir, height); err != nil {
+		return types.SnapshotItem{}, fmt.Errorf("failed to clear after restore: %w", err)
+	}
+
+	// to prevent creating a new empty DB,
+	// set the initial version to the restored height
+	rs.opts.InitialVersion = height
 	return item, rs.LoadLatestVersion()
 }
 

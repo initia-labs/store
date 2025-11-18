@@ -9,7 +9,7 @@ import (
 type MemNode struct {
 	height  uint8
 	size    int64
-	version uint32
+	version uint64
 	key     []byte
 	value   []byte
 	left    Node
@@ -20,7 +20,7 @@ type MemNode struct {
 
 var _ Node = (*MemNode)(nil)
 
-func newLeafNode(key, value []byte, version uint32) *MemNode {
+func newLeafNode(key, value []byte, version uint64) *MemNode {
 	return &MemNode{
 		key: key, value: value, version: version, size: 1,
 	}
@@ -38,7 +38,7 @@ func (node *MemNode) Size() int64 {
 	return node.size
 }
 
-func (node *MemNode) Version() uint32 {
+func (node *MemNode) Version() uint64 {
 	return node.version
 }
 
@@ -59,7 +59,7 @@ func (node *MemNode) Right() Node {
 }
 
 // Mutate clones the node if it's version is smaller than or equal to cowVersion, otherwise modify in-place
-func (node *MemNode) Mutate(version, cowVersion uint32) *MemNode {
+func (node *MemNode) Mutate(version, cowVersion uint64) *MemNode {
 	n := node
 	if node.version <= cowVersion {
 		cloned := *node
@@ -107,7 +107,7 @@ func calcBalance(node Node) int {
 //	 L                   S
 //	/ \                 / \
 //	  LR               LR
-func (node *MemNode) rotateRight(version, cowVersion uint32) *MemNode {
+func (node *MemNode) rotateRight(version, cowVersion uint64) *MemNode {
 	newSelf := node.left.Mutate(version, cowVersion)
 	node.left = node.left.Right()
 	newSelf.right = node
@@ -123,7 +123,7 @@ func (node *MemNode) rotateRight(version, cowVersion uint32) *MemNode {
 //	    R         S
 //	   / \       / \
 //	 RL             RL
-func (node *MemNode) rotateLeft(version, cowVersion uint32) *MemNode {
+func (node *MemNode) rotateLeft(version, cowVersion uint64) *MemNode {
 	newSelf := node.right.Mutate(version, cowVersion)
 	node.right = node.right.Left()
 	newSelf.left = node
@@ -133,7 +133,7 @@ func (node *MemNode) rotateLeft(version, cowVersion uint32) *MemNode {
 }
 
 // Invariant: node is returned by `Mutate(version, cowVersion)`.
-func (node *MemNode) reBalance(version, cowVersion uint32) *MemNode {
+func (node *MemNode) reBalance(version, cowVersion uint64) *MemNode {
 	balance := node.calcBalance()
 	switch {
 	case balance > 1:

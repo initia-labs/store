@@ -25,6 +25,8 @@ func SetupMemIAVL(
 	baseAppOptions []func(*baseapp.BaseApp),
 ) []func(*baseapp.BaseApp) {
 	if memIAVLConfig := config.GetMemIAVLConfig(appOpts); memIAVLConfig.Enable {
+		dbDir := filepath.Join(getDBDir(appOpts), "memiavl.db")
+		initialVersion, _ := memiavl.FirstSnapshotVersion(dbDir)
 		opts := memiavl.Options{
 			AsyncCommitBuffer:    memIAVLConfig.AsyncCommitBuffer,
 			ZeroCopy:             memIAVLConfig.ZeroCopy,
@@ -33,6 +35,7 @@ func SetupMemIAVL(
 			CacheSize:            memIAVLConfig.CacheSize,
 			SnapshotWriterLimit:  memIAVLConfig.SnapshotWriterLimit,
 			HistoricalQueryLimit: memIAVLConfig.HistoricalQueryLimit,
+			InitialVersion:       uint64(initialVersion),
 		}
 
 		if opts.ZeroCopy {
@@ -47,7 +50,8 @@ func SetupMemIAVL(
 			opts.TriggerStateSyncExport = func(height int64) {
 				go bapp.SnapshotManager().SnapshotIfApplicable(height)
 			}
-			cms := rootmulti.NewStore(filepath.Join(getDBDir(appOpts), "memiavl.db"), logger, supportExportNonSnapshotVersion)
+
+			cms := rootmulti.NewStore(dbDir, logger, supportExportNonSnapshotVersion)
 			cms.SetMemIAVLOptions(opts)
 			bapp.SetCMS(cms)
 		}}, baseAppOptions...)

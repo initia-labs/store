@@ -189,7 +189,7 @@ func TestRootHashes(t *testing.T) {
 }
 
 func TestRootHashesInitialVersion(t *testing.T) {
-	tree := NewWithInitialVersion(uint32(IAVLInitialVersion), 0)
+	tree := NewWithInitialVersion(uint64(IAVLInitialVersion), 0)
 
 	for i, changes := range ChangeSets {
 		tree.ApplyChangeSet(changes)

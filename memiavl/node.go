@@ -13,7 +13,7 @@ type Node interface {
 	Height() uint8
 	IsLeaf() bool
 	Size() int64
-	Version() uint32
+	Version() uint64
 	Key() []byte
 	Value() []byte
 	Left() Node
@@ -24,7 +24,7 @@ type Node interface {
 	SafeHash() []byte
 
 	// PersistedNode clone a new node, MemNode modify in place
-	Mutate(version, cowVersion uint32) *MemNode
+	Mutate(version, cowVersion uint64) *MemNode
 
 	// Get query the value for a key, it's put into interface because a specialized implementation is more efficient.
 	Get(key []byte) ([]byte, uint32)
@@ -34,7 +34,7 @@ type Node interface {
 // setRecursive do set operation.
 // it always do modification and return new `MemNode`, even if the value is the same.
 // also returns if it's an update or insertion, if update, the tree height and balance is not changed.
-func setRecursive(node Node, key, value []byte, version, cowVersion uint32) (*MemNode, bool) {
+func setRecursive(node Node, key, value []byte, version, cowVersion uint64) (*MemNode, bool) {
 	if node == nil {
 		return newLeafNode(key, value, version), true
 	}
@@ -93,7 +93,7 @@ func setRecursive(node Node, key, value []byte, version, cowVersion uint32) (*Me
 // - (nil, origNode, nil) -> nothing changed in subtree
 // - (value, nil, newKey) -> leaf node is removed
 // - (value, new node, newKey) -> subtree changed
-func removeRecursive(node Node, key []byte, version, cowVersion uint32) ([]byte, Node, []byte) {
+func removeRecursive(node Node, key []byte, version, cowVersion uint64) ([]byte, Node, []byte) {
 	if node == nil {
 		return nil, nil, nil
 	}

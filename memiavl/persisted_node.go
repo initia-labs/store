@@ -10,7 +10,7 @@ const (
 	OffsetHeight   = 0
 	OffsetPreTrees = OffsetHeight + 1
 	OffsetVersion  = OffsetHeight + 4
-	OffsetSize     = OffsetVersion + 4
+	OffsetSize     = OffsetVersion + 8
 	OffsetKeyLeaf  = OffsetSize + 4
 
 	OffsetHash          = OffsetKeyLeaf + 4
@@ -19,7 +19,7 @@ const (
 	SizeNode            = SizeNodeWithoutHash + SizeHash
 
 	OffsetLeafVersion   = 0
-	OffsetLeafKeyLen    = OffsetLeafVersion + 4
+	OffsetLeafKeyLen    = OffsetLeafVersion + 8
 	OffsetLeafKeyOffset = OffsetLeafKeyLen + 4
 	OffsetLeafHash      = OffsetLeafKeyOffset + 8
 	SizeLeafWithoutHash = OffsetLeafHash
@@ -33,12 +33,12 @@ const (
 // - height    : 1
 // - preTrees  : 1
 // - _padding  : 2
-// - version   : 4
+// - version   : 8
 // - size      : 4
 // - key node  : 4  // node index of the smallest leaf in right branch
 // - hash      : 32
 // Leaf node:
-// - version    : 4
+// - version    : 8
 // - key len    : 4
 // - key offset : 8
 // - hash       : 32
@@ -69,7 +69,7 @@ func (node PersistedNode) IsLeaf() bool {
 	return node.isLeaf
 }
 
-func (node PersistedNode) Version() uint32 {
+func (node PersistedNode) Version() uint64 {
 	if node.isLeaf {
 		return node.leafNode().Version()
 	}
@@ -142,7 +142,7 @@ func (node PersistedNode) Hash() []byte {
 	return node.branchNode().Hash()
 }
 
-func (node PersistedNode) Mutate(version, _ uint32) *MemNode {
+func (node PersistedNode) Mutate(version, _ uint64) *MemNode {
 	if node.isLeaf {
 		key, value := node.snapshot.LeafKeyValue(node.index)
 		return &MemNode{

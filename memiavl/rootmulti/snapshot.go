@@ -13,11 +13,11 @@ import (
 
 // Snapshot Implements interface Snapshotter
 func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) (returnErr error) {
-	if height > math.MaxUint32 {
-		return fmt.Errorf("height overflows uint32: %d", height)
+	if height > math.MaxInt64 {
+		return fmt.Errorf("height overflows int64: %d", height)
 	}
-	version := uint32(height)
 
+	version := uint64(height)
 	exporter, err := memiavl.NewMultiTreeExporter(rs.dir, version, rs.supportExportNonSnapshotVersion)
 	if err != nil {
 		return err
