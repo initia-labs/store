@@ -53,7 +53,7 @@ func TestQueryCacheRespectsConfiguredLimit(t *testing.T) {
 	})
 	defer store.Close()
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		commitValue(t, store, key, fmt.Sprintf("limit-%d", i), fmt.Sprintf("v%d", i))
 	}
 
@@ -62,4 +62,27 @@ func TestQueryCacheRespectsConfiguredLimit(t *testing.T) {
 	_, hasLatest := store.queryCache.entries[4]
 	require.False(t, hasOld)
 	require.True(t, hasLatest)
+}
+
+func TestQueryCachePrunesSeedDBWhenClearingHistoricalEntries(t *testing.T) {
+	store, key := newTestStore(t, 2)
+	defer store.Close()
+
+	for i := range 3 {
+		commitValue(t, store, key, fmt.Sprintf("prune-%d", i), fmt.Sprintf("v%d", i))
+	}
+
+	cache := store.queryCache
+	opts := store.opts
+	opts.ReadOnly = true
+	seedDB, err := memiavl.Load(store.dir, opts)
+	require.NoError(t, err)
+	cache.SetSeedInfo(seedDB, 3)
+	require.NotNil(t, cache.seedDB)
+
+	commitValue(t, store, key, "prune-3", "v3")
+	require.NotNil(t, cache.seedDB, "seed db should remain until clear height is pruned")
+
+	commitValue(t, store, key, "prune-4", "v4")
+	require.Nil(t, cache.seedDB, "seed db should be cleared once version >= clear height is pruned")
 }

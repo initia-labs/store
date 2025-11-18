@@ -18,6 +18,10 @@ type queryDBCache struct {
 
 	stop chan struct{}
 	once sync.Once
+
+	// seedDB tracks the initial memiavl.DB used to seed the query cache.
+	seedDB          *memiavl.DB
+	seedClearHeight int64
 }
 
 func newQueryDBCache(store *Store) *queryDBCache {
@@ -34,6 +38,10 @@ func (c *queryDBCache) Reset() {
 	defer c.mu.Unlock()
 	c.entries = make(map[int64]*cachedTrees)
 	c.seq = c.seq[:0]
+	if c.seedDB != nil {
+		_ = c.seedDB.Close()
+		c.seedDB = nil
+	}
 }
 
 func (c *queryDBCache) Close() {
@@ -79,6 +87,12 @@ func (c *queryDBCache) pruneHistoricalTrees() {
 		version := c.seq[0]
 		c.seq = c.seq[1:]
 		delete(c.entries, version)
+
+		// clear seedDB if it's beyond the clear height
+		if c.seedDB != nil && version >= c.seedClearHeight {
+			_ = c.seedDB.Close()
+			c.seedDB = nil
+		}
 	}
 }
 
@@ -97,4 +111,11 @@ func (c *queryDBCache) snapshotIntervalLimit() int {
 		limit = memiavl.DefaultSnapshotInterval
 	}
 	return limit
+}
+
+func (c *queryDBCache) SetSeedInfo(db *memiavl.DB, height int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.seedDB = db
+	c.seedClearHeight = height
 }

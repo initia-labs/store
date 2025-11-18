@@ -1,6 +1,7 @@
 package rootmulti
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,44 @@ func TestCacheMultiStoreWithVersionReturnsErrorWhenPruned(t *testing.T) {
 	_, err := store.CacheMultiStoreWithVersion(1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "historical version not found")
+}
+
+func TestLoadQueryCachePopulatesHistoricalWindow(t *testing.T) {
+	store, key := newTestStore(t, 3)
+	defer store.Close()
+
+	for i := range 5 {
+		commitValue(t, store, key, "foo", fmt.Sprintf("v%d", i))
+	}
+
+	latest := store.LastCommitID().Version
+	require.True(t, latest > int64(store.opts.HistoricalQueryCacheSize))
+
+	// mimic restart: keep only the latest version in cache before loading from disk
+	store.queryCache.Reset()
+	store.queryCache.AddHistoricalVersion(store.db, latest)
+	require.Len(t, store.queryCache.entries, 1)
+
+	store.loadQueryCache(latest)
+
+	limit := store.opts.HistoricalQueryCacheSize
+	require.Len(t, store.queryCache.entries, limit)
+
+	start := latest - int64(limit) + 1
+	for v := start; v <= latest; v++ {
+		_, ok := store.queryCache.entries[v]
+		require.Truef(t, ok, "expected cached version %d", v)
+	}
+
+	for h := start; h <= latest; h++ {
+		cms, err := store.CacheMultiStoreWithVersion(int64(h))
+		require.NoError(t, err)
+		value := cms.GetKVStore(key).Get([]byte("foo"))
+		require.Equal(t, []byte(fmt.Sprintf("v%d", h-1)), value)
+	}
+
+	require.NotNil(t, store.queryCache.seedDB)
+	require.Equal(t, latest, store.queryCache.seedClearHeight)
 }
 
 func newTestStore(t *testing.T, snapshotInterval uint32, customizers ...func(*memiavl.Options)) (*Store, types.StoreKey) {

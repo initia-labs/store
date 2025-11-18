@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/tidwall/wal"
 
 	"cosmossdk.io/errors"
 	"cosmossdk.io/log"
@@ -203,17 +206,17 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 		return nil, fmt.Errorf("version overflows uint32: %d", version)
 	}
 
-	if version == 0 {
-		if rs.lastCommitInfo != nil {
-			version = rs.lastCommitInfo.Version
-		} else {
-			version = rs.db.Version()
-		}
+	latestVersion := rs.LatestVersion()
+	if version == 0 || version > latestVersion {
+		version = latestVersion
+	}
+	if latestVersion-version > int64(rs.opts.HistoricalQueryCacheSize) {
+		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
 	}
 
 	historicalTrees, ok := rs.queryCache.GetHistoricalTrees(version)
 	if !ok {
-		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
+		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
 	}
 
 	stores := make(map[types.StoreKey]types.CacheWrapper)
@@ -397,9 +400,52 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 	}
 	if rs.lastCommitInfo.Version > 0 {
 		rs.queryCache.AddHistoricalVersion(rs.db, rs.lastCommitInfo.Version)
+		go rs.loadQueryCache(rs.lastCommitInfo.Version)
 	}
 
 	return nil
+}
+
+// loadQueryCache loads the historical query cache db in background.
+func (rs *Store) loadQueryCache(latestVersion int64) {
+	opts := rs.opts
+	opts.ReadOnly = true
+	if latestVersion > int64(rs.opts.HistoricalQueryCacheSize) {
+		opts.TargetVersion = uint32(latestVersion - int64(rs.opts.HistoricalQueryCacheSize) + 1)
+	}
+	if opts.TargetVersion < max(rs.opts.InitialVersion, 1) {
+		opts.TargetVersion = max(rs.opts.InitialVersion, 1)
+	}
+
+	rs.logger.Info("loading memiavl query cache", "from", opts.TargetVersion, "to", latestVersion)
+
+	db, err := memiavl.Load(rs.dir, opts)
+	if err != nil {
+		rs.logger.Error("failed to load memiavl for query cache", "error", err)
+		return
+	}
+
+	// set query cache seed info for future pruning
+	rs.queryCache.SetSeedInfo(db, latestVersion)
+
+	// add the initial historical version into query cache
+	rs.queryCache.AddHistoricalVersion(db, int64(opts.TargetVersion))
+
+	// catch up the  WAL logs to the latest version and add historical versions into query cache
+	wal, err := memiavl.OpenWAL(filepath.Join(rs.dir, "wal"), &wal.Options{NoCopy: true, NoSync: true})
+	if err != nil {
+		rs.logger.Error("failed to open memiavl wal for query cache", "error", err)
+		return
+	}
+	for h := opts.TargetVersion + 1; h < uint32(latestVersion); h++ {
+		if err = db.MultiTree.CatchupWAL(wal, int64(h)); err != nil {
+			rs.logger.Error("failed to catchup memiavl wal for query cache", "height", h, "error", err)
+			return
+		}
+		rs.queryCache.AddHistoricalVersion(db, int64(h))
+	}
+
+	rs.logger.Info("finished loading memiavl query cache", "from", opts.TargetVersion, "to", latestVersion)
 }
 
 func (rs *Store) loadCommitStoreFromParams(db *memiavl.DB, key types.StoreKey, params storeParams) (types.CommitStore, error) {
