@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/tidwall/wal"
 
 	"cosmossdk.io/errors"
 	"cosmossdk.io/log"
@@ -19,8 +22,8 @@ import (
 	dbm "github.com/cosmos/cosmos-db"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 
-	"github.com/initia-labs/store/cachemulti"
 	"github.com/initia-labs/store/memiavl"
+	"github.com/initia-labs/store/memiavl/cachemulti"
 )
 
 const CommitInfoFileName = "commit_infos"
@@ -46,10 +49,12 @@ type Store struct {
 	supportExportNonSnapshotVersion bool
 
 	opts memiavl.Options
+
+	queryCache *queryDBCache
 }
 
 func NewStore(dir string, logger log.Logger, supportExportNonSnapshotVersion bool) *Store {
-	return &Store{
+	store := &Store{
 		dir:    dir,
 		logger: logger,
 
@@ -60,6 +65,8 @@ func NewStore(dir string, logger log.Logger, supportExportNonSnapshotVersion boo
 
 		supportExportNonSnapshotVersion: supportExportNonSnapshotVersion,
 	}
+	store.queryCache = newQueryDBCache(store)
+	return store
 }
 
 // flush writes all the pending change sets to memiavl tree.
@@ -122,10 +129,15 @@ func (rs *Store) Commit() types.CommitID {
 	}
 
 	rs.lastCommitInfo = convertCommitInfo(rs.db.LastCommitInfo())
+
+	// add the committed version into historical query cache
+	rs.queryCache.AddHistoricalVersion(rs.db, rs.lastCommitInfo.Version)
+
 	return rs.lastCommitInfo.CommitID()
 }
 
 func (rs *Store) Close() error {
+	rs.queryCache.Close()
 	return rs.db.Close()
 }
 
@@ -190,15 +202,21 @@ func (rs *Store) CacheMultiStore() types.CacheMultiStore {
 // CacheMultiStoreWithVersion Implements interface MultiStore
 // used to createQueryContext, abci_query or grpc query service.
 func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStore, error) {
-	if version == 0 || (rs.lastCommitInfo != nil && version == rs.lastCommitInfo.Version) {
-		return rs.CacheMultiStore(), nil
+	if version > math.MaxUint32 {
+		return nil, fmt.Errorf("version overflows uint32: %d", version)
 	}
-	opts := rs.opts
-	opts.TargetVersion = uint32(version)
-	opts.ReadOnly = true
-	db, err := memiavl.Load(rs.dir, opts)
-	if err != nil {
-		return nil, err
+
+	latestVersion := rs.LatestVersion()
+	if version == 0 || version > latestVersion {
+		version = latestVersion
+	}
+	if latestVersion-version >= int64(rs.queryCache.CacheLimit()) {
+		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
+	}
+
+	historicalTrees, ok := rs.queryCache.GetHistoricalTrees(version)
+	if !ok {
+		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
 	}
 
 	stores := make(map[types.StoreKey]types.CacheWrapper)
@@ -211,8 +229,12 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 	}
 
 	// add all the iavl stores at the target version.
-	for _, tree := range db.Trees() {
-		stores[rs.keysByName[tree.Name]] = memiavl.NewStore(tree.Tree, rs.logger)
+	for name, tree := range historicalTrees {
+		key, ok := rs.keysByName[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown store key: %s", name)
+		}
+		stores[key] = memiavl.NewStore(tree, rs.logger)
 	}
 
 	return cachemulti.NewStore(stores, nil, nil, nil), nil
@@ -314,6 +336,8 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 		return fmt.Errorf("version overflows uint32: %d", version)
 	}
 
+	rs.queryCache.Reset()
+
 	storesKeys := make([]types.StoreKey, 0, len(rs.storesParams))
 	for key := range rs.storesParams {
 		storesKeys = append(storesKeys, key)
@@ -374,8 +398,55 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 	} else {
 		rs.lastCommitInfo = &types.CommitInfo{}
 	}
+	if rs.lastCommitInfo.Version > 0 {
+		rs.queryCache.AddHistoricalVersion(rs.db, rs.lastCommitInfo.Version)
+		go rs.loadQueryCache(rs.lastCommitInfo.Version)
+	}
 
 	return nil
+}
+
+// loadQueryCache loads the historical query cache db in background.
+func (rs *Store) loadQueryCache(latestVersion int64) {
+	opts := rs.opts
+	opts.ReadOnly = true
+	if latestVersion > int64(rs.queryCache.CacheLimit()) {
+		opts.TargetVersion = uint32(latestVersion - int64(rs.queryCache.CacheLimit()) + 1)
+	}
+	if opts.TargetVersion < max(rs.opts.InitialVersion, 1) {
+		opts.TargetVersion = max(rs.opts.InitialVersion, 1)
+	}
+
+	rs.logger.Info("loading memiavl query cache", "from", opts.TargetVersion, "to", latestVersion)
+
+	db, err := memiavl.Load(rs.dir, opts)
+	if err != nil {
+		rs.logger.Error("failed to load memiavl for query cache", "error", err)
+		return
+	}
+	wal, err := memiavl.OpenWAL(filepath.Join(rs.dir, "wal"), &wal.Options{NoCopy: true, NoSync: true})
+	if err != nil {
+		_ = db.Close()
+		rs.logger.Error("failed to open memiavl wal for query cache", "error", err)
+		return
+	}
+
+	// set query cache seed info for future pruning
+	rs.queryCache.SetSeedInfo(db, wal, latestVersion)
+
+	// add the initial historical version into query cache
+	rs.queryCache.AddHistoricalVersion(db, int64(opts.TargetVersion))
+
+	// catch up the  WAL logs to the latest version and add historical versions into query cache
+	for h := opts.TargetVersion + 1; h < uint32(latestVersion); h++ {
+		if err = db.MultiTree.CatchupWAL(wal, int64(h)); err != nil {
+			rs.logger.Error("failed to catchup memiavl wal for query cache", "height", h, "error", err)
+			return
+		}
+		rs.queryCache.AddHistoricalVersion(db, int64(h))
+	}
+
+	rs.logger.Info("finished loading memiavl query cache", "from", opts.TargetVersion, "to", latestVersion)
 }
 
 func (rs *Store) loadCommitStoreFromParams(db *memiavl.DB, key types.StoreKey, params storeParams) (types.CommitStore, error) {
@@ -444,7 +515,19 @@ func (rs *Store) SetMemIAVLOptions(opts memiavl.Options) {
 	if opts.Logger == nil {
 		opts.Logger = memiavl.Logger(rs.logger.With("module", "memiavl"))
 	}
+	clampHistoricalCacheOptions(&opts)
 	rs.opts = opts
+}
+
+func clampHistoricalCacheOptions(opts *memiavl.Options) {
+	maxInterval := int(opts.SnapshotInterval)
+	if maxInterval <= 0 {
+		maxInterval = memiavl.DefaultSnapshotInterval
+	}
+
+	if opts.HistoricalQueryLimit <= 0 || opts.HistoricalQueryLimit > maxInterval {
+		opts.HistoricalQueryLimit = maxInterval
+	}
 }
 
 // RollbackToVersion delete the versions after `target` and update the latest version.

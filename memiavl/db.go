@@ -109,7 +109,11 @@ type Options struct {
 	// it do nothing if the target version is `0`.
 	LoadForOverwriting bool
 
+	// SnapshotWriterLimit controls how many concurrent snapshot writers are allowed.
 	SnapshotWriterLimit int
+
+	// HistoricalQueryLimit controls how many recent versions are cached in-memory for historical queries.
+	HistoricalQueryLimit int
 }
 
 func (opts Options) Validate() error {

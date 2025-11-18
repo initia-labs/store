@@ -13,7 +13,7 @@ import (
 
 	"github.com/initia-labs/store/config"
 	"github.com/initia-labs/store/memiavl"
-	"github.com/initia-labs/store/rootmulti"
+	"github.com/initia-labs/store/memiavl/rootmulti"
 )
 
 // SetupMemIAVL insert the memiavl setter in front of baseapp options, so that
@@ -26,12 +26,13 @@ func SetupMemIAVL(
 ) []func(*baseapp.BaseApp) {
 	if memIAVLConfig := config.GetMemIAVLConfig(appOpts); memIAVLConfig.Enable {
 		opts := memiavl.Options{
-			AsyncCommitBuffer:   memIAVLConfig.AsyncCommitBuffer,
-			ZeroCopy:            memIAVLConfig.ZeroCopy,
-			SnapshotKeepRecent:  memIAVLConfig.SnapshotKeepRecent,
-			SnapshotInterval:    memIAVLConfig.SnapshotInterval,
-			CacheSize:           memIAVLConfig.CacheSize,
-			SnapshotWriterLimit: memIAVLConfig.SnapshotWriterLimit,
+			AsyncCommitBuffer:    memIAVLConfig.AsyncCommitBuffer,
+			ZeroCopy:             memIAVLConfig.ZeroCopy,
+			SnapshotKeepRecent:   memIAVLConfig.SnapshotKeepRecent,
+			SnapshotInterval:     memIAVLConfig.SnapshotInterval,
+			CacheSize:            memIAVLConfig.CacheSize,
+			SnapshotWriterLimit:  memIAVLConfig.SnapshotWriterLimit,
+			HistoricalQueryLimit: memIAVLConfig.HistoricalQueryLimit,
 		}
 
 		if opts.ZeroCopy {
