@@ -445,6 +445,13 @@ func walVersion(index uint64, initialVersion uint64) int64 {
 	return int64(index)
 }
 
+// ReadMetadata reads the multi tree metadata from the "current" directory
+func ReadMetadata(dir string) (*MultiTreeMetadata, error) {
+	path := filepath.Join(dir, "current")
+	return readMetadata(path)
+}
+
+// readMetadata reads the multi tree metadata from the given directory
 func readMetadata(dir string) (*MultiTreeMetadata, error) {
 	// load commit info
 	bz, err := os.ReadFile(filepath.Join(dir, MetadataFileName))

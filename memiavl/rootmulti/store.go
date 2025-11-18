@@ -357,6 +357,13 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 		return errors.Wrapf(err, "fail to load memiavl at %s", rs.dir)
 	}
 
+	// read and set initial version from metadata
+	metadata, err := memiavl.ReadMetadata(rs.dir)
+	if err != nil {
+		return errors.Wrapf(err, "fail to read memiavl metadata at %s", rs.dir)
+	}
+	rs.opts.InitialVersion = uint64(metadata.InitialVersion)
+
 	var treeUpgrades []*memiavl.TreeNameUpgrade
 	if upgrades != nil {
 		for _, name := range upgrades.Deleted {
@@ -404,8 +411,12 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 func (rs *Store) loadQueryCache(latestVersion int64) {
 	opts := rs.opts
 	opts.ReadOnly = true
-	if latestVersion > int64(rs.queryCache.CacheLimit()) {
-		opts.TargetVersion = uint64(latestVersion - int64(rs.queryCache.CacheLimit()) + 1)
+	cacheLimit := rs.queryCache.CacheLimit()
+	if cacheLimit <= 0 {
+		return
+	}
+	if latestVersion > int64(cacheLimit) {
+		opts.TargetVersion = uint64(latestVersion - int64(cacheLimit) + 1)
 	}
 	if opts.TargetVersion < max(rs.opts.InitialVersion, 1) {
 		opts.TargetVersion = max(rs.opts.InitialVersion, 1)
@@ -486,6 +497,7 @@ func (rs *Store) SetInterBlockCache(c types.MultiStorePersistentCache) {}
 // SetInitialVersion Implements interface CommitMultiStore
 // used by InitChain when the initial height is bigger than 1
 func (rs *Store) SetInitialVersion(version int64) error {
+	rs.opts.InitialVersion = uint64(version)
 	return rs.db.SetInitialVersion(version)
 }
 
