@@ -210,7 +210,7 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 	if version == 0 || version > latestVersion {
 		version = latestVersion
 	}
-	if latestVersion-version >= int64(rs.opts.HistoricalQueryLimit) {
+	if latestVersion-version >= int64(rs.queryCache.CacheLimit()) {
 		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
 	}
 
@@ -410,8 +410,8 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 func (rs *Store) loadQueryCache(latestVersion int64) {
 	opts := rs.opts
 	opts.ReadOnly = true
-	if latestVersion > int64(rs.opts.HistoricalQueryLimit) {
-		opts.TargetVersion = uint32(latestVersion - int64(rs.opts.HistoricalQueryLimit) + 1)
+	if latestVersion > int64(rs.queryCache.CacheLimit()) {
+		opts.TargetVersion = uint32(latestVersion - int64(rs.queryCache.CacheLimit()) + 1)
 	}
 	if opts.TargetVersion < max(rs.opts.InitialVersion, 1) {
 		opts.TargetVersion = max(rs.opts.InitialVersion, 1)

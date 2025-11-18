@@ -114,7 +114,7 @@ func (c *queryDBCache) insertVersion(version int64) {
 }
 
 func (c *queryDBCache) pruneHistoricalTrees() {
-	limit := c.HistoricalCacheSize()
+	limit := c.CacheLimit()
 	if limit <= 0 {
 		return
 	}
@@ -139,13 +139,15 @@ func (c *queryDBCache) pruneHistoricalTrees() {
 	}
 }
 
-func (c *queryDBCache) HistoricalCacheSize() int {
+func (c *queryDBCache) CacheLimit() int {
 	maxInterval := c.snapshotIntervalLimit()
 	limit := c.store.opts.HistoricalQueryLimit
 	if limit <= 0 || limit > maxInterval {
-		return maxInterval
+		limit = maxInterval
 	}
-	return limit
+
+	// +1 to account for the current version
+	return limit + 1
 }
 
 func (c *queryDBCache) snapshotIntervalLimit() int {

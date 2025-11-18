@@ -46,7 +46,7 @@ func TestCacheMultiStoreWithVersionReturnsErrorWhenPruned(t *testing.T) {
 	commitValue(t, store, key, targetKey, "v3")
 	commitValue(t, store, key, targetKey, "v4")
 
-	require.Len(t, store.queryCache.entries, 2)
+	require.Len(t, store.queryCache.entries, store.queryCache.CacheLimit())
 
 	_, err := store.CacheMultiStoreWithVersion(1)
 	require.Error(t, err)
@@ -62,7 +62,7 @@ func TestLoadQueryCachePopulatesHistoricalWindow(t *testing.T) {
 	}
 
 	latest := store.LastCommitID().Version
-	require.True(t, latest > int64(store.opts.HistoricalQueryLimit))
+	require.True(t, latest > int64(store.queryCache.CacheLimit()))
 
 	// mimic restart: keep only the latest version in cache before loading from disk
 	store.queryCache.Reset()
@@ -71,7 +71,7 @@ func TestLoadQueryCachePopulatesHistoricalWindow(t *testing.T) {
 
 	store.loadQueryCache(latest)
 
-	limit := store.opts.HistoricalQueryLimit
+	limit := store.queryCache.CacheLimit()
 	require.Len(t, store.queryCache.entries, limit)
 
 	start := latest - int64(limit) + 1

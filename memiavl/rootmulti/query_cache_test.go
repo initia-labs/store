@@ -19,7 +19,7 @@ func TestQueryCacheHistoricalPruning(t *testing.T) {
 	}
 
 	historicalTrees := store.queryCache.entries
-	require.Equal(t, 2, len(historicalTrees), "historical cache should keep only snapshotInterval versions")
+	require.Len(t, historicalTrees, store.queryCache.CacheLimit(), "historical cache should keep snapshotInterval historical versions plus the latest")
 	_, hasV2 := historicalTrees[2]
 	_, hasV3 := historicalTrees[3]
 	require.True(t, hasV2 && hasV3, "expected versions 2 and 3 to remain")
@@ -58,8 +58,8 @@ func TestQueryCacheRespectsConfiguredLimit(t *testing.T) {
 		commitValue(t, store, key, fmt.Sprintf("limit-%d", i), fmt.Sprintf("v%d", i))
 	}
 
-	require.Len(t, store.queryCache.entries, 2)
-	_, hasOld := store.queryCache.entries[2]
+	require.Len(t, store.queryCache.entries, store.queryCache.CacheLimit())
+	_, hasOld := store.queryCache.entries[1]
 	_, hasLatest := store.queryCache.entries[4]
 	require.False(t, hasOld)
 	require.True(t, hasLatest)
@@ -81,6 +81,10 @@ func TestQueryCachePrunesSeedDBWhenClearingHistoricalEntries(t *testing.T) {
 
 	cache.SetSeedInfo(seedDB, &wal.Log{}, 3)
 	require.NotNil(t, cache.seedDB)
+
+	commitValue(t, store, key, "prune-2", "v2")
+	require.NotNil(t, cache.seedDB, "seed db should remain until clear height is pruned")
+	require.NotNil(t, cache.seedWal, "seed wal should remain until clear height is pruned")
 
 	commitValue(t, store, key, "prune-3", "v3")
 	require.NotNil(t, cache.seedDB, "seed db should remain until clear height is pruned")
@@ -106,7 +110,7 @@ func TestQueryCachePruningAfterLoadKeepsNewestVersions(t *testing.T) {
 	store.queryCache.AddHistoricalVersion(store.db, latest)
 	store.loadQueryCache(latest)
 
-	limit := store.queryCache.HistoricalCacheSize()
+	limit := store.queryCache.CacheLimit()
 	require.Len(t, store.queryCache.entries, limit)
 
 	commitValue(t, store, key, "post-load", "latest")
