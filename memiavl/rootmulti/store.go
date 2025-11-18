@@ -210,7 +210,7 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 	if version == 0 || version > latestVersion {
 		version = latestVersion
 	}
-	if latestVersion-version > int64(rs.opts.HistoricalQueryLimit) {
+	if latestVersion-version >= int64(rs.opts.HistoricalQueryLimit) {
 		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
 	}
 
