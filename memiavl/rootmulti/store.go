@@ -497,8 +497,12 @@ func (rs *Store) SetInterBlockCache(c types.MultiStorePersistentCache) {}
 // SetInitialVersion Implements interface CommitMultiStore
 // used by InitChain when the initial height is bigger than 1
 func (rs *Store) SetInitialVersion(version int64) error {
+	if err := rs.db.SetInitialVersion(version); err != nil {
+		return err
+	}
+
 	rs.opts.InitialVersion = uint64(version)
-	return rs.db.SetInitialVersion(version)
+	return nil
 }
 
 // SetIAVLCacheSize Implements interface CommitMultiStore

@@ -271,7 +271,7 @@ func buildCommitInfo(storeInfos []storetypes.StoreInfo, version int64) storetype
 	})
 
 	return storetypes.CommitInfo{
-		Version:    storeInfos[0].CommitId.Version,
+		Version:    version,
 		StoreInfos: storeInfos,
 	}
 }
