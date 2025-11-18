@@ -71,16 +71,16 @@ func (c *queryDBCache) AddHistoricalVersion(db *memiavl.DB, version int64) {
 		return
 	}
 
-	trees := make(map[string]*memiavl.Tree)
-	for _, entry := range db.Trees() {
-		trees[entry.Name] = entry.Tree.Copy(0)
-	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if _, exists := c.entries[version]; exists {
 		return
+	}
+
+	trees := make(map[string]*memiavl.Tree)
+	for _, entry := range db.Trees() {
+		trees[entry.Name] = entry.Tree.Copy(0)
 	}
 
 	c.entries[version] = &cachedTrees{trees: trees}
