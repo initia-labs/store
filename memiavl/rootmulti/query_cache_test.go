@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/wal"
 
 	"github.com/initia-labs/store/memiavl"
 )
@@ -49,7 +50,7 @@ func TestQueryCacheReset(t *testing.T) {
 
 func TestQueryCacheRespectsConfiguredLimit(t *testing.T) {
 	store, key := newTestStore(t, 5, func(opts *memiavl.Options) {
-		opts.HistoricalQueryCacheSize = 2
+		opts.HistoricalQueryLimit = 2
 	})
 	defer store.Close()
 
@@ -77,12 +78,46 @@ func TestQueryCachePrunesSeedDBWhenClearingHistoricalEntries(t *testing.T) {
 	opts.ReadOnly = true
 	seedDB, err := memiavl.Load(store.dir, opts)
 	require.NoError(t, err)
-	cache.SetSeedInfo(seedDB, 3)
+
+	cache.SetSeedInfo(seedDB, &wal.Log{}, 3)
 	require.NotNil(t, cache.seedDB)
 
 	commitValue(t, store, key, "prune-3", "v3")
 	require.NotNil(t, cache.seedDB, "seed db should remain until clear height is pruned")
+	require.NotNil(t, cache.seedWal, "seed wal should remain until clear height is pruned")
 
 	commitValue(t, store, key, "prune-4", "v4")
 	require.Nil(t, cache.seedDB, "seed db should be cleared once version >= clear height is pruned")
+	require.Nil(t, cache.seedWal, "seed wal should be cleared once version >= clear height is pruned")
+}
+
+func TestQueryCachePruningAfterLoadKeepsNewestVersions(t *testing.T) {
+	store, key := newTestStore(t, 3)
+	defer store.Close()
+
+	for i := 0; i < 5; i++ {
+		commitValue(t, store, key, fmt.Sprintf("reload-%d", i), fmt.Sprintf("v%d", i))
+	}
+
+	latest := store.LastCommitID().Version
+
+	// Mimic node restart where the latest version is cached before background seeding.
+	store.queryCache.Reset()
+	store.queryCache.AddHistoricalVersion(store.db, latest)
+	store.loadQueryCache(latest)
+
+	limit := store.queryCache.HistoricalCacheSize()
+	require.Len(t, store.queryCache.entries, limit)
+
+	commitValue(t, store, key, "post-load", "latest")
+
+	newLatest := store.LastCommitID().Version
+	require.Equal(t, latest+1, newLatest)
+	require.Len(t, store.queryCache.entries, limit)
+
+	start := newLatest - int64(limit) + 1
+	for v := start; v <= newLatest; v++ {
+		_, ok := store.queryCache.entries[v]
+		require.Truef(t, ok, "expected cached version %d", v)
+	}
 }

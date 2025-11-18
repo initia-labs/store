@@ -210,7 +210,7 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 	if version == 0 || version > latestVersion {
 		version = latestVersion
 	}
-	if latestVersion-version > int64(rs.opts.HistoricalQueryCacheSize) {
+	if latestVersion-version > int64(rs.opts.HistoricalQueryLimit) {
 		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
 	}
 
@@ -410,8 +410,8 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 func (rs *Store) loadQueryCache(latestVersion int64) {
 	opts := rs.opts
 	opts.ReadOnly = true
-	if latestVersion > int64(rs.opts.HistoricalQueryCacheSize) {
-		opts.TargetVersion = uint32(latestVersion - int64(rs.opts.HistoricalQueryCacheSize) + 1)
+	if latestVersion > int64(rs.opts.HistoricalQueryLimit) {
+		opts.TargetVersion = uint32(latestVersion - int64(rs.opts.HistoricalQueryLimit) + 1)
 	}
 	if opts.TargetVersion < max(rs.opts.InitialVersion, 1) {
 		opts.TargetVersion = max(rs.opts.InitialVersion, 1)
@@ -424,19 +424,20 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 		rs.logger.Error("failed to load memiavl for query cache", "error", err)
 		return
 	}
+	wal, err := memiavl.OpenWAL(filepath.Join(rs.dir, "wal"), &wal.Options{NoCopy: true, NoSync: true})
+	if err != nil {
+		_ = db.Close()
+		rs.logger.Error("failed to open memiavl wal for query cache", "error", err)
+		return
+	}
 
 	// set query cache seed info for future pruning
-	rs.queryCache.SetSeedInfo(db, latestVersion)
+	rs.queryCache.SetSeedInfo(db, wal, latestVersion)
 
 	// add the initial historical version into query cache
 	rs.queryCache.AddHistoricalVersion(db, int64(opts.TargetVersion))
 
 	// catch up the  WAL logs to the latest version and add historical versions into query cache
-	wal, err := memiavl.OpenWAL(filepath.Join(rs.dir, "wal"), &wal.Options{NoCopy: true, NoSync: true})
-	if err != nil {
-		rs.logger.Error("failed to open memiavl wal for query cache", "error", err)
-		return
-	}
 	for h := opts.TargetVersion + 1; h < uint32(latestVersion); h++ {
 		if err = db.MultiTree.CatchupWAL(wal, int64(h)); err != nil {
 			rs.logger.Error("failed to catchup memiavl wal for query cache", "height", h, "error", err)
@@ -524,8 +525,8 @@ func clampHistoricalCacheOptions(opts *memiavl.Options) {
 		maxInterval = memiavl.DefaultSnapshotInterval
 	}
 
-	if opts.HistoricalQueryCacheSize <= 0 || opts.HistoricalQueryCacheSize > maxInterval {
-		opts.HistoricalQueryCacheSize = maxInterval
+	if opts.HistoricalQueryLimit <= 0 || opts.HistoricalQueryLimit > maxInterval {
+		opts.HistoricalQueryLimit = maxInterval
 	}
 }
 

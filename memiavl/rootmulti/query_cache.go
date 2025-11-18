@@ -1,9 +1,11 @@
 package rootmulti
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/initia-labs/store/memiavl"
+	"github.com/tidwall/wal"
 )
 
 type cachedTrees struct {
@@ -21,6 +23,7 @@ type queryDBCache struct {
 
 	// seedDB tracks the initial memiavl.DB used to seed the query cache.
 	seedDB          *memiavl.DB
+	seedWal         *wal.Log
 	seedClearHeight int64
 }
 
@@ -41,6 +44,10 @@ func (c *queryDBCache) Reset() {
 	if c.seedDB != nil {
 		_ = c.seedDB.Close()
 		c.seedDB = nil
+	}
+	if c.seedWal != nil {
+		_ = c.seedWal.Close()
+		c.seedWal = nil
 	}
 }
 
@@ -72,9 +79,38 @@ func (c *queryDBCache) AddHistoricalVersion(db *memiavl.DB, version int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if _, exists := c.entries[version]; exists {
+		return
+	}
+
 	c.entries[version] = &cachedTrees{trees: trees}
-	c.seq = append(c.seq, version)
+	c.insertVersion(version)
 	c.pruneHistoricalTrees()
+}
+
+func (c *queryDBCache) insertVersion(version int64) {
+	n := len(c.seq)
+	switch {
+	case n == 0:
+		c.seq = append(c.seq, version)
+		return
+	case version > c.seq[n-1]:
+		c.seq = append(c.seq, version)
+		return
+	case version == c.seq[n-1]:
+		return
+	}
+
+	idx := sort.Search(n, func(i int) bool {
+		return c.seq[i] >= version
+	})
+	if idx < n && c.seq[idx] == version {
+		return
+	}
+
+	c.seq = append(c.seq, 0)
+	copy(c.seq[idx+1:], c.seq[idx:])
+	c.seq[idx] = version
 }
 
 func (c *queryDBCache) pruneHistoricalTrees() {
@@ -89,16 +125,23 @@ func (c *queryDBCache) pruneHistoricalTrees() {
 		delete(c.entries, version)
 
 		// clear seedDB if it's beyond the clear height
-		if c.seedDB != nil && version >= c.seedClearHeight {
-			_ = c.seedDB.Close()
-			c.seedDB = nil
+		if version >= c.seedClearHeight {
+			if c.seedDB != nil {
+				_ = c.seedDB.Close()
+				c.seedDB = nil
+			}
+			if c.seedWal != nil {
+				_ = c.seedWal.Close()
+				c.seedWal = nil
+			}
 		}
+
 	}
 }
 
 func (c *queryDBCache) HistoricalCacheSize() int {
 	maxInterval := c.snapshotIntervalLimit()
-	limit := c.store.opts.HistoricalQueryCacheSize
+	limit := c.store.opts.HistoricalQueryLimit
 	if limit <= 0 || limit > maxInterval {
 		return maxInterval
 	}
@@ -113,9 +156,10 @@ func (c *queryDBCache) snapshotIntervalLimit() int {
 	return limit
 }
 
-func (c *queryDBCache) SetSeedInfo(db *memiavl.DB, height int64) {
+func (c *queryDBCache) SetSeedInfo(db *memiavl.DB, wal *wal.Log, height int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.seedDB = db
+	c.seedWal = wal
 	c.seedClearHeight = height
 }

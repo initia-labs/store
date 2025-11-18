@@ -112,8 +112,8 @@ type Options struct {
 	// SnapshotWriterLimit controls how many concurrent snapshot writers are allowed.
 	SnapshotWriterLimit int
 
-	// HistoricalQueryCacheSize controls how many recent versions are cached in-memory for historical queries.
-	HistoricalQueryCacheSize int
+	// HistoricalQueryLimit controls how many recent versions are cached in-memory for historical queries.
+	HistoricalQueryLimit int
 }
 
 func (opts Options) Validate() error {
