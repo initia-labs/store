@@ -415,15 +415,24 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 	if cacheLimit <= 0 {
 		return
 	}
+
+	startVersion := uint64(1)
 	if latestVersion > int64(cacheLimit) {
-		opts.TargetVersion = uint64(latestVersion - int64(cacheLimit) + 1)
-	}
-	if opts.TargetVersion < max(rs.opts.InitialVersion, 1) {
-		opts.TargetVersion = max(rs.opts.InitialVersion, 1)
+		startVersion = uint64(latestVersion - int64(cacheLimit) + 1)
 	}
 
-	rs.logger.Info("loading memiavl query cache", "from", opts.TargetVersion, "to", latestVersion)
+	// if initial version is greater than 1, this means initial version is set
+	// snapshot height + 1, so we need to set the target version accordingly.
+	if rs.opts.InitialVersion > 1 {
+		initialHeight := rs.opts.InitialVersion - 1
+		if startVersion < max(initialHeight, 1) {
+			startVersion = max(initialHeight, 1)
+		}
+	}
 
+	rs.logger.Info("loading memiavl query cache", "from", startVersion, "to", latestVersion)
+
+	opts.TargetVersion = startVersion
 	db, err := memiavl.Load(rs.dir, opts)
 	if err != nil {
 		rs.logger.Error("failed to load memiavl for query cache", "error", err)
@@ -440,10 +449,10 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 	rs.queryCache.SetSeedInfo(db, wal, latestVersion)
 
 	// add the initial historical version into query cache
-	rs.queryCache.AddHistoricalVersion(db, int64(opts.TargetVersion))
+	rs.queryCache.AddHistoricalVersion(db, int64(startVersion))
 
 	// catch up the  WAL logs to the latest version and add historical versions into query cache
-	for h := opts.TargetVersion + 1; h < uint64(latestVersion); h++ {
+	for h := startVersion + 1; h < uint64(latestVersion); h++ {
 		if err = db.MultiTree.CatchupWAL(wal, int64(h)); err != nil {
 			rs.logger.Error("failed to catchup memiavl wal for query cache", "height", h, "error", err)
 			return
@@ -451,7 +460,7 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 		rs.queryCache.AddHistoricalVersion(db, int64(h))
 	}
 
-	rs.logger.Info("finished loading memiavl query cache", "from", opts.TargetVersion, "to", latestVersion)
+	rs.logger.Info("finished loading memiavl query cache", "from", startVersion, "to", latestVersion)
 }
 
 func (rs *Store) loadCommitStoreFromParams(db *memiavl.DB, key types.StoreKey, params storeParams) (types.CommitStore, error) {
