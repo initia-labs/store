@@ -20,8 +20,8 @@ type MultiTreeImporter struct {
 }
 
 func NewMultiTreeImporter(dir string, height uint64) (*MultiTreeImporter, error) {
-	if height > math.MaxUint32 {
-		return nil, fmt.Errorf("version overflows uint32: %d", height)
+	if height > math.MaxInt64 {
+		return nil, fmt.Errorf("version overflows int64: %d", height)
 	}
 
 	var fileLock FileLock
@@ -42,7 +42,7 @@ func (mti *MultiTreeImporter) tmpDir() string {
 	return filepath.Join(mti.dir, mti.snapshotDir+TmpSuffix)
 }
 
-func (mti *MultiTreeImporter) Add(item interface{}) error {
+func (mti *MultiTreeImporter) Add(item any) error {
 	switch item := item.(type) {
 	case *ExportNode:
 		mti.AddNode(item)
@@ -130,11 +130,11 @@ func (ai *TreeImporter) Close() error {
 
 // doImport a stream of `ExportNode`s into a new snapshot.
 func doImport(dir string, version int64, nodes <-chan *ExportNode) (returnErr error) {
-	if version > int64(math.MaxUint32) {
-		return fmt.Errorf("version overflows uint32: %d", version)
+	if version < 0 {
+		return fmt.Errorf("version must be non-negative: %d", version)
 	}
 
-	return writeSnapshot(context.Background(), dir, uint32(version), func(w *snapshotWriter) (uint32, error) {
+	return writeSnapshot(context.Background(), dir, uint64(version), func(w *snapshotWriter) (uint32, error) {
 		i := &importer{
 			snapshotWriter: *w,
 		}
@@ -166,15 +166,15 @@ type importer struct {
 }
 
 func (i *importer) Add(n *ExportNode) error {
-	if n.Version > int64(math.MaxUint32) {
-		return fmt.Errorf("version overflows uint32: %d", n.Version)
+	if n.Version < 0 {
+		return fmt.Errorf("version must be non-negative: %d", n.Version)
 	}
 
 	if n.Height == 0 {
 		node := &MemNode{
 			height:  0,
 			size:    1,
-			version: uint32(n.Version),
+			version: uint64(n.Version),
 			key:     n.Key,
 			value:   n.Value,
 		}
@@ -195,7 +195,7 @@ func (i *importer) Add(n *ExportNode) error {
 	node := &MemNode{
 		height:  uint8(n.Height),
 		size:    leftNode.size + rightNode.size,
-		version: uint32(n.Version),
+		version: uint64(n.Version),
 		key:     n.Key,
 		left:    leftNode,
 		right:   rightNode,

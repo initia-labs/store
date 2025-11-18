@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cosmos/iavl"
-	"github.com/initia-labs/store/versiondb"
 	"github.com/linxGnu/grocksdb"
 
 	"cosmossdk.io/store/types"
+	"github.com/cosmos/iavl"
+
+	"github.com/initia-labs/store/versiondb"
 )
 
 const (

@@ -20,7 +20,7 @@ func NewCache(cacheSize int) cache.Cache {
 
 // Tree verify change sets by replay them to rebuild iavl tree and verify the root hashes
 type Tree struct {
-	version, cowVersion uint32
+	version, cowVersion uint64
 	// root node of empty tree is represented as `nil`
 	root     Node
 	snapshot *Snapshot
@@ -42,12 +42,8 @@ func (n *cacheNode) GetKey() []byte {
 
 // NewEmptyTree creates an empty tree at an arbitrary version.
 func NewEmptyTree(version uint64, cacheSize int) *Tree {
-	if version >= math.MaxUint32 {
-		panic("version overflows uint32")
-	}
-
 	return &Tree{
-		version: uint32(version),
+		version: version,
 		// no need to copy if the tree is not backed by snapshot
 		zeroCopy: true,
 		cache:    NewCache(cacheSize),
@@ -61,11 +57,11 @@ func New(cacheSize int) *Tree {
 
 // NewWithInitialVersion creates a empty tree with initial-version,
 // it happens when a new store created at the middle of the chain.
-func NewWithInitialVersion(initialVersion uint32, cacheSize int) *Tree {
+func NewWithInitialVersion(initialVersion uint64, cacheSize int) *Tree {
 	if initialVersion <= 1 {
 		return New(cacheSize)
 	}
-	return NewEmptyTree(uint64(initialVersion-1), cacheSize)
+	return NewEmptyTree(initialVersion-1, cacheSize)
 }
 
 // NewFromSnapshot mmap the blob files and create the root node.
@@ -93,15 +89,15 @@ func (t *Tree) IsEmpty() bool {
 }
 
 func (t *Tree) SetInitialVersion(initialVersion int64) error {
-	if initialVersion >= math.MaxUint32 {
-		return fmt.Errorf("version overflows uint32: %d", initialVersion)
+	if initialVersion < 0 {
+		return fmt.Errorf("initial version must be non-negative: %d", initialVersion)
 	}
 
-	t.setInitialVersion(uint32(initialVersion))
+	t.setInitialVersion(uint64(initialVersion))
 	return nil
 }
 
-func (t *Tree) setInitialVersion(initialVersion uint32) {
+func (t *Tree) setInitialVersion(initialVersion uint64) {
 	if t.version > 0 {
 		// initial version has no effect if the tree is already initialized
 		return
@@ -158,8 +154,8 @@ func (t *Tree) remove(key []byte) {
 
 // SaveVersion increases the version number and optionally updates the hashes
 func (t *Tree) SaveVersion(updateHash bool) ([]byte, int64, error) {
-	if t.version == uint32(math.MaxUint32) {
-		return nil, 0, fmt.Errorf("version overflows uint32: %d", t.version)
+	if t.version+1 > math.MaxInt64 {
+		return nil, 0, fmt.Errorf("version overflows int64: %d", t.version)
 	}
 
 	var hash []byte
@@ -173,6 +169,9 @@ func (t *Tree) SaveVersion(updateHash bool) ([]byte, int64, error) {
 
 // Version returns the current tree version
 func (t *Tree) Version() int64 {
+	if t.version > math.MaxInt64 {
+		panic(fmt.Sprintf("version overflows int64: %d", t.version))
+	}
 	return int64(t.version)
 }
 

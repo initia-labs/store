@@ -44,7 +44,7 @@ func (nodes Nodes) Node(i uint32) NodeLayout {
 
 // nodeLayout see comment of `PersistedNode`
 type nodeLayout struct {
-	data [4]uint32
+	data [5]uint32
 	hash [32]byte
 }
 
@@ -56,20 +56,16 @@ func (node NodeLayout) PreTrees() uint8 {
 	return uint8(node.data[0] >> 8)
 }
 
-func (node *nodeLayout) Version() uint32 {
-	return node.data[1]
+func (node *nodeLayout) Version() uint64 {
+	return uint64(node.data[1]) | uint64(node.data[2])<<32
 }
 
 func (node *nodeLayout) Size() uint32 {
-	return node.data[2]
-}
-
-func (node *nodeLayout) KeyLeaf() uint32 {
 	return node.data[3]
 }
 
-func (node *nodeLayout) KeyOffset() uint64 {
-	return uint64(node.data[2]) | uint64(node.data[3])<<32
+func (node *nodeLayout) KeyLeaf() uint32 {
+	return node.data[4]
 }
 
 func (node *nodeLayout) Hash() []byte {
@@ -102,22 +98,20 @@ func (leaves Leaves) Leaf(i uint32) LeafLayout {
 }
 
 type leafLayout struct {
-	version   uint32
-	keyLen    uint32
-	keyOffset uint64
-	hash      [32]byte
+	data [5]uint32
+	hash [32]byte
 }
 
-func (leaf *leafLayout) Version() uint32 {
-	return leaf.version
+func (leaf *leafLayout) Version() uint64 {
+	return uint64(leaf.data[0]) | uint64(leaf.data[1])<<32
 }
 
 func (leaf *leafLayout) KeyLength() uint32 {
-	return leaf.keyLen
+	return leaf.data[2]
 }
 
 func (leaf *leafLayout) KeyOffset() uint64 {
-	return leaf.keyOffset
+	return uint64(leaf.data[3]) | uint64(leaf.data[4])<<32
 }
 
 func (leaf *leafLayout) Hash() []byte {

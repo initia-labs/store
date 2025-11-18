@@ -68,25 +68,23 @@ IAVL snapshot is composed by four files:
   ```plaintext
   magic: 4
   format: 4
-  version: 4
-  root node index: 4
+  version: 8
   ```
 
-* `nodes`, array of fixed size(16+32bytes) nodes, the node format is like this:
+* `nodes`, array of fixed size(20+32bytes) nodes, the node format is like this:
 
   ```plaintext
   # branch
   height   : 1
   _padding : 3
-  version  : 4
+  version  : 8
   size     : 4
   key node : 4
   hash     : [32]byte
 
   # leaf
-  height      : 1
-  _padding    : 3
-  version     : 4
+  version     : 8
+  key len     : 4
   key offset  : 8
   hash        : [32]byte
   ```
@@ -102,7 +100,7 @@ IAVL snapshot is composed by four files:
   left child index = key node - 1
   ```
 
-  The version/size/node indexes are encoded with 4 bytes, should be enough in foreseeable future, but could be changed to more bytes in the future.
+  Versions are encoded with 8 bytes while size and node indexes remain 4 bytes, which should be enough in the foreseeable future.
 
   The implementation will read the mmap-ed content in a zero-copy way, won't use extra node cache, it will only rely on the OS page cache.
 

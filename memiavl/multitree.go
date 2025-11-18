@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,7 +38,7 @@ type MultiTree struct {
 	// if the tree is start from genesis, it's the initial version of the chain,
 	// if the tree is imported from snapshot, it's the imported version plus one,
 	// it always corresponds to the wal entry with index 1.
-	initialVersion uint32
+	initialVersion uint64
 
 	zeroCopy  bool
 	cacheSize int
@@ -52,7 +51,7 @@ type MultiTree struct {
 	metadata MultiTreeMetadata
 }
 
-func NewEmptyMultiTree(initialVersion uint32, cacheSize int) *MultiTree {
+func NewEmptyMultiTree(initialVersion uint64, cacheSize int) *MultiTree {
 	return &MultiTree{
 		initialVersion: initialVersion,
 		treesByName:    make(map[string]int),
@@ -106,8 +105,8 @@ func LoadMultiTree(dir string, zeroCopy bool, cacheSize int) (*MultiTree, error)
 		cacheSize:      cacheSize,
 	}
 	// initial version is nesserary for wal index conversion,
-	// overflow checked in `readMetadata`.
-	mtree.setInitialVersion(uint32(metadata.InitialVersion))
+	// validity checked in `readMetadata`.
+	mtree.setInitialVersion(uint64(metadata.InitialVersion))
 	return mtree, nil
 }
 
@@ -125,8 +124,8 @@ func (t *MultiTree) Trees() []NamedTree {
 }
 
 func (t *MultiTree) SetInitialVersion(initialVersion int64) error {
-	if initialVersion >= math.MaxUint32 {
-		return fmt.Errorf("version overflows uint32: %d", initialVersion)
+	if initialVersion < 0 {
+		return fmt.Errorf("initial version must be non-negative: %d", initialVersion)
 	}
 
 	if t.Version() != 0 {
@@ -139,11 +138,11 @@ func (t *MultiTree) SetInitialVersion(initialVersion int64) error {
 		}
 	}
 
-	t.setInitialVersion(uint32(initialVersion))
+	t.setInitialVersion(uint64(initialVersion))
 	return nil
 }
 
-func (t *MultiTree) setInitialVersion(initialVersion uint32) {
+func (t *MultiTree) setInitialVersion(initialVersion uint64) {
 	t.initialVersion = initialVersion
 	if t.initialVersion > 1 {
 		for _, entry := range t.trees {
@@ -225,7 +224,7 @@ func (t *MultiTree) ApplyUpgrades(upgrades []*TreeNameUpgrade) error {
 			t.trees[i].Name = upgrade.Name
 		default:
 			// add tree
-			tree := NewWithInitialVersion(uint32(nextVersion(t.Version(), t.initialVersion)), t.cacheSize)
+			tree := NewWithInitialVersion(uint64(nextVersion(t.Version(), t.initialVersion)), t.cacheSize)
 			t.trees = append(t.trees, NamedTree{Tree: tree, Name: upgrade.Name})
 		}
 	}
@@ -423,7 +422,7 @@ func (t *MultiTree) Close() error {
 	return errors.Join(errs...)
 }
 
-func nextVersion(v int64, initialVersion uint32) int64 {
+func nextVersion(v int64, initialVersion uint64) int64 {
 	if v == 0 && initialVersion > 1 {
 		return int64(initialVersion)
 	}
@@ -431,21 +430,28 @@ func nextVersion(v int64, initialVersion uint32) int64 {
 }
 
 // walIndex converts version to wal index based on initial version
-func walIndex(v int64, initialVersion uint32) uint64 {
+func walIndex(v int64, initialVersion uint64) uint64 {
 	if initialVersion > 1 {
-		return uint64(v) - uint64(initialVersion) + 1
+		return uint64(v) - initialVersion + 1
 	}
 	return uint64(v)
 }
 
 // walVersion converts wal index to version, reverse of walIndex
-func walVersion(index uint64, initialVersion uint32) int64 {
+func walVersion(index uint64, initialVersion uint64) int64 {
 	if initialVersion > 1 {
 		return int64(index) + int64(initialVersion) - 1
 	}
 	return int64(index)
 }
 
+// ReadMetadata reads the multi tree metadata from the "current" directory
+func ReadMetadata(dir string) (*MultiTreeMetadata, error) {
+	path := filepath.Join(dir, "current")
+	return readMetadata(path)
+}
+
+// readMetadata reads the multi tree metadata from the given directory
 func readMetadata(dir string) (*MultiTreeMetadata, error) {
 	// load commit info
 	bz, err := os.ReadFile(filepath.Join(dir, MetadataFileName))
@@ -456,11 +462,11 @@ func readMetadata(dir string) (*MultiTreeMetadata, error) {
 	if err := metadata.Unmarshal(bz); err != nil {
 		return nil, err
 	}
-	if metadata.CommitInfo.Version > math.MaxUint32 {
-		return nil, fmt.Errorf("commit info version overflows uint32: %d", metadata.CommitInfo.Version)
+	if metadata.CommitInfo.Version < 0 {
+		return nil, fmt.Errorf("commit info version is negative: %d", metadata.CommitInfo.Version)
 	}
-	if metadata.InitialVersion > math.MaxUint32 {
-		return nil, fmt.Errorf("initial version overflows uint32: %d", metadata.InitialVersion)
+	if metadata.InitialVersion < 0 {
+		return nil, fmt.Errorf("initial version is negative: %d", metadata.InitialVersion)
 	}
 
 	return &metadata, nil

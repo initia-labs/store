@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 )
 
@@ -24,7 +25,10 @@ type MultiTreeExporter struct {
 	exporter *Exporter
 }
 
-func NewMultiTreeExporter(dir string, version uint32, supportExportNonSnapshotVersion bool) (exporter *MultiTreeExporter, err error) {
+func NewMultiTreeExporter(dir string, version uint64, supportExportNonSnapshotVersion bool) (exporter *MultiTreeExporter, err error) {
+	if version > math.MaxInt64 {
+		return nil, fmt.Errorf("version overflows int64: %d", version)
+	}
 	var (
 		db    *DB
 		mtree *MultiTree
@@ -66,7 +70,7 @@ func (mte *MultiTreeExporter) trees() []NamedTree {
 	return mte.mtree.trees
 }
 
-func (mte *MultiTreeExporter) Next() (interface{}, error) {
+func (mte *MultiTreeExporter) Next() (any, error) {
 	if mte.exporter != nil {
 		node, err := mte.exporter.Next()
 		if err != nil {

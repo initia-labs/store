@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -170,7 +171,7 @@ func RestoreAppDBCmd(opts *Options) *cobra.Command {
 
 // oneStore process a single store, can run in parallel with other stores,
 func oneStore(sstWriter *grocksdb.SSTFileWriter, store string, snapshot *memiavl.Snapshot, sstDir string, sstFileSizeTarget, sorterChunkSize uint64) error {
-	prefix := []byte(fmt.Sprintf(storeKeyPrefix, store))
+	prefix := fmt.Appendf(nil, storeKeyPrefix, store)
 
 	inputChan, outputChan := extsort.Spawn(sstDir, extsort.Options{
 		MaxChunkSize:      int64(sorterChunkSize),
@@ -224,7 +225,11 @@ func oneStore(sstWriter *grocksdb.SSTFileWriter, store string, snapshot *memiavl
 	}
 
 	// root record, it use empty slice for root hash of empty tree
-	rootKey := cloneAppend(prefix, rootKeyFormat.Key(int64(snapshot.Version())))
+	snapVersion := snapshot.Version()
+	if snapVersion > math.MaxInt64 {
+		return fmt.Errorf("snapshot version overflows int64: %d", snapVersion)
+	}
+	rootKey := cloneAppend(prefix, rootKeyFormat.Key(int64(snapVersion)))
 	var rootHash []byte
 	if !snapshot.IsEmpty() {
 		rootHash = snapshot.RootNode().Hash()

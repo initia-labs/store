@@ -18,8 +18,8 @@ const (
 	// SnapshotFormat the initial snapshot format
 	SnapshotFormat = 0
 
-	// SizeMetadata magic: uint32, format: uint32, version: uint32
-	SizeMetadata = 12
+	// SizeMetadata magic: uint32, format: uint32, version: uint64
+	SizeMetadata = 16
 
 	FileNameNodes    = "nodes"
 	FileNameLeaves   = "leaves"
@@ -42,7 +42,7 @@ type Snapshot struct {
 	kvs    []byte
 
 	// parsed from metadata file
-	version uint32
+	version uint64
 
 	// wrapping the raw nodes buffer
 	nodesLayout  Nodes
@@ -52,7 +52,7 @@ type Snapshot struct {
 	root *PersistedNode
 }
 
-func NewEmptySnapshot(version uint32) *Snapshot {
+func NewEmptySnapshot(version uint64) *Snapshot {
 	return &Snapshot{
 		version: version,
 	}
@@ -78,7 +78,7 @@ func OpenSnapshot(snapshotDir string) (snapshot *Snapshot, err error) {
 	if format != SnapshotFormat {
 		return nil, fmt.Errorf("unknown snapshot format: %d", format)
 	}
-	version := binary.LittleEndian.Uint32(bz[8:])
+	version := binary.LittleEndian.Uint64(bz[8:])
 
 	var nodesMap, leavesMap, kvsMap *MmapFile
 	defer func() {
@@ -211,7 +211,7 @@ func (snapshot *Snapshot) Leaf(index uint32) PersistedNode {
 }
 
 // Version returns the version of the snapshot
-func (snapshot *Snapshot) Version() uint32 {
+func (snapshot *Snapshot) Version() uint64 {
 	return snapshot.version
 }
 
@@ -367,7 +367,7 @@ func (t *Tree) WriteSnapshotWithContext(ctx context.Context, snapshotDir string)
 
 func writeSnapshot(
 	ctx context.Context,
-	dir string, version uint32,
+	dir string, version uint64,
 	doWrite func(*snapshotWriter) (uint32, error),
 ) (returnErr error) {
 	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
@@ -444,7 +444,7 @@ func writeSnapshot(
 	var metadataBuf [SizeMetadata]byte
 	binary.LittleEndian.PutUint32(metadataBuf[:], SnapshotFileMagic)
 	binary.LittleEndian.PutUint32(metadataBuf[4:], SnapshotFormat)
-	binary.LittleEndian.PutUint32(metadataBuf[8:], version)
+	binary.LittleEndian.PutUint64(metadataBuf[8:], version)
 
 	metadataFile := filepath.Join(dir, FileNameMetadata)
 	fpMetadata, err := createFile(metadataFile)
@@ -510,7 +510,7 @@ func (w *snapshotWriter) writeKeyValue(key, value []byte) error {
 	return nil
 }
 
-func (w *snapshotWriter) writeLeaf(version uint32, key, value, hash []byte) error {
+func (w *snapshotWriter) writeLeaf(version uint64, key, value, hash []byte) error {
 	if w.leafCounter%CancelCheckInterval == 0 {
 		select {
 		case <-w.ctx.Done():
@@ -520,7 +520,7 @@ func (w *snapshotWriter) writeLeaf(version uint32, key, value, hash []byte) erro
 	}
 
 	var buf [SizeLeafWithoutHash]byte
-	binary.LittleEndian.PutUint32(buf[OffsetLeafVersion:], version)
+	binary.LittleEndian.PutUint64(buf[OffsetLeafVersion:], version)
 	binary.LittleEndian.PutUint32(buf[OffsetLeafKeyLen:], uint32(len(key)))
 	binary.LittleEndian.PutUint64(buf[OffsetLeafKeyOffset:], w.kvsOffset)
 
@@ -539,11 +539,11 @@ func (w *snapshotWriter) writeLeaf(version uint32, key, value, hash []byte) erro
 	return nil
 }
 
-func (w *snapshotWriter) writeBranch(version, size uint32, height, preTrees uint8, keyLeaf uint32, hash []byte) error {
+func (w *snapshotWriter) writeBranch(version uint64, size uint32, height, preTrees uint8, keyLeaf uint32, hash []byte) error {
 	var buf [SizeNodeWithoutHash]byte
 	buf[OffsetHeight] = height
 	buf[OffsetPreTrees] = preTrees
-	binary.LittleEndian.PutUint32(buf[OffsetVersion:], version)
+	binary.LittleEndian.PutUint64(buf[OffsetVersion:], version)
 	binary.LittleEndian.PutUint32(buf[OffsetSize:], size)
 	binary.LittleEndian.PutUint32(buf[OffsetKeyLeaf:], keyLeaf)
 

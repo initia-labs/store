@@ -3,7 +3,6 @@ package rootmulti
 import (
 	"fmt"
 	"io"
-	"math"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -202,12 +201,11 @@ func (rs *Store) CacheMultiStore() types.CacheMultiStore {
 // CacheMultiStoreWithVersion Implements interface MultiStore
 // used to createQueryContext, abci_query or grpc query service.
 func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStore, error) {
-	if version > math.MaxUint32 {
-		return nil, fmt.Errorf("version overflows uint32: %d", version)
-	}
-
 	latestVersion := rs.LatestVersion()
-	if version == 0 || version > latestVersion {
+	if version > latestVersion {
+		return nil, sdkerrors.ErrInvalidHeight.Wrapf("requested version %d is greater than latest version %d", version, latestVersion)
+	}
+	if version <= 0 {
 		version = latestVersion
 	}
 	if latestVersion-version >= int64(rs.queryCache.CacheLimit()) {
@@ -332,10 +330,6 @@ func (rs *Store) LoadLatestVersionAndUpgrade(upgrades *types.StoreUpgrades) erro
 // LoadVersionAndUpgrade Implements interface CommitMultiStore
 // used by node startup with UpgradeStoreLoader
 func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgrades) error {
-	if version > math.MaxUint32 {
-		return fmt.Errorf("version overflows uint32: %d", version)
-	}
-
 	rs.queryCache.Reset()
 
 	storesKeys := make([]types.StoreKey, 0, len(rs.storesParams))
@@ -357,11 +351,18 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 	opts := rs.opts
 	opts.CreateIfMissing = true
 	opts.InitialStores = initialStores
-	opts.TargetVersion = uint32(version)
+	opts.TargetVersion = uint64(version)
 	db, err := memiavl.Load(rs.dir, opts)
 	if err != nil {
 		return errors.Wrapf(err, "fail to load memiavl at %s", rs.dir)
 	}
+
+	// read and set initial version from metadata
+	metadata, err := memiavl.ReadMetadata(rs.dir)
+	if err != nil {
+		return errors.Wrapf(err, "fail to read memiavl metadata at %s", rs.dir)
+	}
+	rs.opts.InitialVersion = uint64(metadata.InitialVersion)
 
 	var treeUpgrades []*memiavl.TreeNameUpgrade
 	if upgrades != nil {
@@ -410,15 +411,28 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 func (rs *Store) loadQueryCache(latestVersion int64) {
 	opts := rs.opts
 	opts.ReadOnly = true
-	if latestVersion > int64(rs.queryCache.CacheLimit()) {
-		opts.TargetVersion = uint32(latestVersion - int64(rs.queryCache.CacheLimit()) + 1)
-	}
-	if opts.TargetVersion < max(rs.opts.InitialVersion, 1) {
-		opts.TargetVersion = max(rs.opts.InitialVersion, 1)
+	cacheLimit := rs.queryCache.CacheLimit()
+	if cacheLimit <= 0 {
+		return
 	}
 
-	rs.logger.Info("loading memiavl query cache", "from", opts.TargetVersion, "to", latestVersion)
+	startVersion := uint64(1)
+	if latestVersion > int64(cacheLimit) {
+		startVersion = uint64(latestVersion - int64(cacheLimit) + 1)
+	}
 
+	// if initial version is greater than 1, this means initial version is set
+	// snapshot height + 1, so we need to set the target version accordingly.
+	if rs.opts.InitialVersion > 1 {
+		initialHeight := rs.opts.InitialVersion - 1
+		if startVersion < max(initialHeight, 1) {
+			startVersion = max(initialHeight, 1)
+		}
+	}
+
+	rs.logger.Info("loading memiavl query cache", "from", startVersion, "to", latestVersion)
+
+	opts.TargetVersion = startVersion
 	db, err := memiavl.Load(rs.dir, opts)
 	if err != nil {
 		rs.logger.Error("failed to load memiavl for query cache", "error", err)
@@ -435,10 +449,10 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 	rs.queryCache.SetSeedInfo(db, wal, latestVersion)
 
 	// add the initial historical version into query cache
-	rs.queryCache.AddHistoricalVersion(db, int64(opts.TargetVersion))
+	rs.queryCache.AddHistoricalVersion(db, int64(startVersion))
 
 	// catch up the  WAL logs to the latest version and add historical versions into query cache
-	for h := opts.TargetVersion + 1; h < uint32(latestVersion); h++ {
+	for h := startVersion + 1; h < uint64(latestVersion); h++ {
 		if err = db.MultiTree.CatchupWAL(wal, int64(h)); err != nil {
 			rs.logger.Error("failed to catchup memiavl wal for query cache", "height", h, "error", err)
 			return
@@ -446,7 +460,7 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 		rs.queryCache.AddHistoricalVersion(db, int64(h))
 	}
 
-	rs.logger.Info("finished loading memiavl query cache", "from", opts.TargetVersion, "to", latestVersion)
+	rs.logger.Info("finished loading memiavl query cache", "from", startVersion, "to", latestVersion)
 }
 
 func (rs *Store) loadCommitStoreFromParams(db *memiavl.DB, key types.StoreKey, params storeParams) (types.CommitStore, error) {
@@ -492,7 +506,12 @@ func (rs *Store) SetInterBlockCache(c types.MultiStorePersistentCache) {}
 // SetInitialVersion Implements interface CommitMultiStore
 // used by InitChain when the initial height is bigger than 1
 func (rs *Store) SetInitialVersion(version int64) error {
-	return rs.db.SetInitialVersion(version)
+	if err := rs.db.SetInitialVersion(version); err != nil {
+		return err
+	}
+
+	rs.opts.InitialVersion = uint64(version)
+	return nil
 }
 
 // SetIAVLCacheSize Implements interface CommitMultiStore
@@ -537,10 +556,6 @@ func (rs *Store) RollbackToVersion(target int64) error {
 		return fmt.Errorf("invalid rollback height target: %d", target)
 	}
 
-	if target > math.MaxUint32 {
-		return fmt.Errorf("rollback height target %d exceeds max uint32", target)
-	}
-
 	if rs.db != nil {
 		if err := rs.db.Close(); err != nil {
 			return err
@@ -548,7 +563,7 @@ func (rs *Store) RollbackToVersion(target int64) error {
 	}
 
 	opts := rs.opts
-	opts.TargetVersion = uint32(target)
+	opts.TargetVersion = uint64(target)
 	opts.LoadForOverwriting = true
 
 	var err error
@@ -609,7 +624,7 @@ func (rs *Store) GetStoreByName(name string) types.Store {
 // Query Implements interface Queryable
 func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 	version := req.Height
-	if version == 0 {
+	if version <= 0 {
 		version = rs.db.Version()
 	}
 
@@ -619,7 +634,7 @@ func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 	db := rs.db
 	if version != rs.lastCommitInfo.Version {
 		var err error
-		db, err = memiavl.Load(rs.dir, memiavl.Options{TargetVersion: uint32(version), ReadOnly: true})
+		db, err = memiavl.Load(rs.dir, memiavl.Options{TargetVersion: uint64(version), ReadOnly: true})
 		if err != nil {
 			return nil, err
 		}

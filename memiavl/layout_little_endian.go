@@ -34,8 +34,8 @@ func (node NodeLayout) PreTrees() uint8 {
 	return node.data[OffsetPreTrees]
 }
 
-func (node NodeLayout) Version() uint32 {
-	return binary.LittleEndian.Uint32(node.data[OffsetVersion : OffsetVersion+4])
+func (node NodeLayout) Version() uint64 {
+	return binary.LittleEndian.Uint64(node.data[OffsetVersion : OffsetVersion+8])
 }
 
 func (node NodeLayout) Size() uint32 {
@@ -68,8 +68,8 @@ type LeafLayout struct {
 	data *[SizeLeaf]byte
 }
 
-func (leaf LeafLayout) Version() uint32 {
-	return binary.LittleEndian.Uint32(leaf.data[OffsetLeafVersion : OffsetLeafVersion+4])
+func (leaf LeafLayout) Version() uint64 {
+	return binary.LittleEndian.Uint64(leaf.data[OffsetLeafVersion : OffsetLeafVersion+8])
 }
 
 func (leaf LeafLayout) KeyLength() uint32 {

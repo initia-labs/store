@@ -70,7 +70,7 @@ func VerifyChangeSetCmd(opts *Options) *cobra.Command {
 			group, _ := pool.GroupContext(context.Background())
 
 			var (
-				lastestVersion int64
+				latestVersion  int64
 				storeInfosLock sync.Mutex
 			)
 			storeInfos := []storetypes.StoreInfo{}
@@ -102,8 +102,8 @@ func VerifyChangeSetCmd(opts *Options) *cobra.Command {
 					storeInfosLock.Lock()
 					defer storeInfosLock.Unlock()
 					storeInfos = append(storeInfos, *storeInfo)
-					if storeInfo.CommitId.Version > lastestVersion {
-						lastestVersion = storeInfo.CommitId.Version
+					if storeInfo.CommitId.Version > latestVersion {
+						latestVersion = storeInfo.CommitId.Version
 					}
 					return nil
 				})
@@ -112,7 +112,7 @@ func VerifyChangeSetCmd(opts *Options) *cobra.Command {
 				return err
 			}
 
-			commitInfo := buildCommitInfo(storeInfos, lastestVersion)
+			commitInfo := buildCommitInfo(storeInfos, latestVersion)
 
 			if len(saveSnapshot) > 0 {
 				// write multitree metadata
@@ -271,7 +271,7 @@ func buildCommitInfo(storeInfos []storetypes.StoreInfo, version int64) storetype
 	})
 
 	return storetypes.CommitInfo{
-		Version:    storeInfos[0].CommitId.Version,
+		Version:    version,
 		StoreInfos: storeInfos,
 	}
 }

@@ -8,7 +8,6 @@ const (
 const (
 	flagStartVersion     = "start-version"
 	flagEndVersion       = "end-version"
-	flagOutput           = "output"
 	flagConcurrency      = "concurrency"
 	flagCheck            = "check"
 	flagSave             = "save"
@@ -24,7 +23,6 @@ const (
 	flagSaveSnapshot     = "save-snapshot"
 	flagLoadSnapshot     = "load-snapshot"
 	flagSorterChunkSize  = "sorter-chunk-size"
-	flagInitialVersion   = "initial-version"
 	flagSDK64Compact     = "sdk64-compact"
 	flagIAVLVersion      = "iavl-version"
 )

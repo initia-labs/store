@@ -51,13 +51,13 @@ func (merge *MultiWayMerge) Less(i, j int) bool {
 }
 
 // Push implements `heap.Interface`
-func (merge *MultiWayMerge) Push(x interface{}) {
+func (merge *MultiWayMerge) Push(x any) {
 	entry := x.(*heapEntry)
 	merge.entries = append(merge.entries, entry)
 }
 
 // Pop implements `heap.Interface`
-func (merge *MultiWayMerge) Pop() interface{} {
+func (merge *MultiWayMerge) Pop() any {
 	l := merge.Len()
 	item := merge.entries[l-1]
 	merge.entries = merge.entries[:l-1]

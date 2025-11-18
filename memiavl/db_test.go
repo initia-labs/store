@@ -203,20 +203,20 @@ func TestInitialVersion(t *testing.T) {
 		// the nodes are created with initial version to be compatible with iavl v1 behavior.
 		// with iavl v0, the nodes are created with version 1.
 		commitId := db.LastCommitInfo().StoreInfos[0].CommitId
-		require.Equal(t, commitId.Hash, HashNode(newLeafNode([]byte(key), []byte(value), uint32(commitId.Version))))
+		require.Equal(t, commitId.Hash, HashNode(newLeafNode([]byte(key), []byte(value), uint64(commitId.Version))))
 
 		require.NoError(t, db.ApplyChangeSets(mockNameChangeSet(name, key, value1)))
 		v, err = db.Commit()
 		require.NoError(t, err)
 		commitId = db.LastCommitInfo().StoreInfos[0].CommitId
 		require.Equal(t, realInitialVersion+1, v)
-		require.Equal(t, commitId.Hash, HashNode(newLeafNode([]byte(key), []byte(value1), uint32(commitId.Version))))
+		require.Equal(t, commitId.Hash, HashNode(newLeafNode([]byte(key), []byte(value1), uint64(commitId.Version))))
 		require.NoError(t, db.Close())
 
 		// reload the db, check the contents are the same
 		db, err = Load(dir, Options{})
 		require.NoError(t, err)
-		require.Equal(t, uint32(initialVersion), db.initialVersion)
+		require.Equal(t, uint64(initialVersion), db.initialVersion)
 		require.Equal(t, v, db.Version())
 		require.Equal(t, hex.EncodeToString(commitId.Hash), hex.EncodeToString(db.LastCommitInfo().StoreInfos[0].CommitId.Hash))
 
@@ -231,7 +231,7 @@ func TestInitialVersion(t *testing.T) {
 		info := db.lastCommitInfo.StoreInfos[0]
 		require.Equal(t, name1, info.Name)
 		require.Equal(t, v, info.CommitId.Version)
-		require.Equal(t, info.CommitId.Hash, HashNode(newLeafNode([]byte(key), []byte(value), uint32(info.CommitId.Version))))
+		require.Equal(t, info.CommitId.Hash, HashNode(newLeafNode([]byte(key), []byte(value), uint64(info.CommitId.Version))))
 
 		// test snapshot rewriting and reload
 		require.NoError(t, db.RewriteSnapshot())
@@ -247,7 +247,7 @@ func TestInitialVersion(t *testing.T) {
 		info2 := db.lastCommitInfo.StoreInfos[1]
 		require.Equal(t, name2, info2.Name)
 		require.Equal(t, v, info2.CommitId.Version)
-		require.Equal(t, info2.CommitId.Hash, HashNode(newLeafNode([]byte(key), []byte(value), uint32(info2.CommitId.Version))))
+		require.Equal(t, info2.CommitId.Hash, HashNode(newLeafNode([]byte(key), []byte(value), uint64(info2.CommitId.Version))))
 	}
 }
 
@@ -283,7 +283,7 @@ func TestLoadVersion(t *testing.T) {
 			continue
 		}
 		tmp, err := Load(dir, Options{
-			TargetVersion: uint32(v),
+			TargetVersion: uint64(v),
 			ReadOnly:      true,
 		})
 		require.NoError(t, err)
@@ -342,7 +342,7 @@ func TestWalIndexConversion(t *testing.T) {
 	testCases := []struct {
 		index          uint64
 		version        int64
-		initialVersion uint32
+		initialVersion uint64
 	}{
 		{1, 1, 0},
 		{1, 1, 1},

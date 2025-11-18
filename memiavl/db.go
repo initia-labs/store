@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -88,7 +89,7 @@ type DB struct {
 type Options struct {
 	Logger          Logger
 	CreateIfMissing bool
-	InitialVersion  uint32
+	InitialVersion  uint64
 	ReadOnly        bool
 	// the initial stores when initialize the empty instance
 	InitialStores          []string
@@ -96,7 +97,7 @@ type Options struct {
 	SnapshotInterval       uint32
 	TriggerStateSyncExport func(height int64)
 	// load the target version instead of latest version
-	TargetVersion uint32
+	TargetVersion uint64
 	// Buffer size for the asynchronous commit queue, -1 means synchronous commit,
 	// default to 0.
 	AsyncCommitBuffer int
@@ -123,6 +124,13 @@ func (opts Options) Validate() error {
 
 	if opts.ReadOnly && opts.LoadForOverwriting {
 		return errors.New("can't rollback db in read-only mode")
+	}
+
+	if opts.InitialVersion > math.MaxInt64 {
+		return fmt.Errorf("initial version overflows int64: %d", opts.InitialVersion)
+	}
+	if opts.TargetVersion > math.MaxInt64 {
+		return fmt.Errorf("target version overflows int64: %d", opts.TargetVersion)
 	}
 
 	return nil
@@ -158,7 +166,6 @@ func Load(dir string, opts Options) (*DB, error) {
 			return nil, fmt.Errorf("fail to load db: %w", err)
 		}
 	}
-
 	var (
 		err      error
 		fileLock FileLock
@@ -922,7 +929,7 @@ func parseVersion(name string) (int64, error) {
 		return 0, fmt.Errorf("invalid snapshot name %s", name)
 	}
 
-	v, err := strconv.ParseInt(name[len(SnapshotPrefix):], 10, 32)
+	v, err := strconv.ParseInt(name[len(SnapshotPrefix):], 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("snapshot version overflows: %w", err)
 	}
@@ -932,7 +939,10 @@ func parseVersion(name string) (int64, error) {
 
 // seekSnapshot find the biggest snapshot version that's smaller than or equal to the target version,
 // returns 0 if not found.
-func seekSnapshot(root string, targetVersion uint32) (int64, error) {
+func seekSnapshot(root string, targetVersion uint64) (int64, error) {
+	if targetVersion > math.MaxInt64 {
+		return 0, fmt.Errorf("target version overflows int64: %d", targetVersion)
+	}
 	var (
 		snapshotVersion int64
 		found           bool
@@ -955,21 +965,26 @@ func seekSnapshot(root string, targetVersion uint32) (int64, error) {
 	return snapshotVersion, nil
 }
 
+// FirstSnapshotVersion finds the earliest snapshot name in the db
+func FirstSnapshotVersion(root string) (int64, error) {
+	return firstSnapshotVersion(root)
+}
+
 // firstSnapshotVersion returns the earliest snapshot name in the db
 func firstSnapshotVersion(root string) (int64, error) {
-	var found int64
+	var found bool
+	var firstVersion int64
 	if err := traverseSnapshots(root, true, func(version int64) (bool, error) {
-		found = version
+		found = true
+		firstVersion = version
 		return true, nil
 	}); err != nil {
 		return 0, err
-	}
-
-	if found == 0 {
+	} else if !found {
 		return 0, errors.New("empty memiavl db")
 	}
 
-	return found, nil
+	return firstVersion, nil
 }
 
 func walPath(root string) string {
@@ -985,7 +1000,7 @@ func walPath(root string) string {
 //
 // current -> snapshot-0
 // ```
-func initEmptyDB(dir string, initialVersion uint32) error {
+func initEmptyDB(dir string, initialVersion uint64) error {
 	tmp := NewEmptyMultiTree(initialVersion, 0)
 	snapshotDir := snapshotName(0)
 	// create tmp worker pool
@@ -1030,7 +1045,7 @@ func traverseSnapshots(dir string, ascending bool, callback func(int64) (bool, e
 	}
 
 	if ascending {
-		for i := 0; i < len(entries); i++ {
+		for i := range entries {
 			stop, err := process(entries[i])
 			if stop || err != nil {
 				return err
@@ -1048,7 +1063,7 @@ func traverseSnapshots(dir string, ascending bool, callback func(int64) (bool, e
 	return nil
 }
 
-// atomicRemoveDir is equavalent to `mv snapshot snapshot-tmp && rm -r snapshot-tmp`
+// atomicRemoveDir is equivalent to `mv snapshot snapshot-tmp && rm -r snapshot-tmp`
 func atomicRemoveDir(path string) error {
 	tmpPath := path + TmpSuffix
 	if err := os.Rename(path, tmpPath); err != nil {
@@ -1059,7 +1074,7 @@ func atomicRemoveDir(path string) error {
 }
 
 // createDBIfNotExist detects if db does not exist and try to initialize an empty one.
-func createDBIfNotExist(dir string, initialVersion uint32) error {
+func createDBIfNotExist(dir string, initialVersion uint64) error {
 	_, err := os.Stat(filepath.Join(dir, "current", MetadataFileName))
 	if err != nil && os.IsNotExist(err) {
 		return initEmptyDB(dir, initialVersion)
@@ -1096,7 +1111,7 @@ func GetLatestVersion(dir string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return walVersion(lastIndex, uint32(metadata.InitialVersion)), nil
+	return walVersion(lastIndex, uint64(metadata.InitialVersion)), nil
 }
 
 func channelBatchRecv[T any](ch <-chan *T) []*T {
@@ -1110,7 +1125,7 @@ func channelBatchRecv[T any](ch <-chan *T) []*T {
 	remaining := len(ch)
 	result := make([]*T, 0, remaining+1)
 	result = append(result, item)
-	for i := 0; i < remaining; i++ {
+	for range remaining {
 		result = append(result, <-ch)
 	}
 
@@ -1129,4 +1144,20 @@ func writeEntry(batch *wal.Batch, logger Logger, lastIndex uint64, entry *walEnt
 		batch.Write(entry.index, bz)
 	}
 	return nil
+}
+
+// ClearSnapshotsBefore removes snapshots older than the given height
+func ClearSnapshotsBefore(dir string, height uint64) error {
+	return traverseSnapshots(dir, true, func(version int64) (bool, error) {
+		if version < int64(height) {
+			name := snapshotName(version)
+			if err := atomicRemoveDir(filepath.Join(dir, name)); err != nil {
+				return false, err
+			}
+
+			return false, nil
+		}
+
+		return true, nil
+	})
 }

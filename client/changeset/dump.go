@@ -128,10 +128,7 @@ func DumpChangeSetCmd(opts *Options) *cobra.Command {
 				// first split work load into chunks
 				var chunks []chunk
 				for i := storeStartVersion; i < endVersion; i += int64(chunkSize) {
-					end := i + int64(chunkSize)
-					if end > endVersion {
-						end = endVersion
-					}
+					end := min(i+int64(chunkSize), endVersion)
 
 					var taskFiles []string
 					group, _ := pool.GroupContext(context.Background())

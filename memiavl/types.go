@@ -4,9 +4,9 @@ import fmt "fmt"
 
 // Logger is what any CometBFT library should take.
 type Logger interface {
-	Debug(msg string, keyvals ...interface{})
-	Info(msg string, keyvals ...interface{})
-	Error(msg string, keyvals ...interface{})
+	Debug(msg string, keyvals ...any)
+	Info(msg string, keyvals ...any)
+	Error(msg string, keyvals ...any)
 }
 
 type nopLogger struct{}
@@ -17,9 +17,9 @@ var _ Logger = (*nopLogger)(nil)
 // NewNopLogger returns a logger that doesn't do anything.
 func NewNopLogger() Logger { return &nopLogger{} }
 
-func (nopLogger) Info(string, ...interface{})  {}
-func (nopLogger) Debug(string, ...interface{}) {}
-func (nopLogger) Error(string, ...interface{}) {}
+func (nopLogger) Info(string, ...any)  {}
+func (nopLogger) Debug(string, ...any) {}
+func (nopLogger) Error(string, ...any) {}
 
 // ExportNode contains exported node data.
 type ExportNode struct {

@@ -38,7 +38,7 @@ func SetupVersionDB(
 		if err != nil {
 			return err
 		}
-		if cmsVersion < qmsVersion {
+		if cmsVersion > 0 && cmsVersion < qmsVersion {
 			app.Logger().Info(
 				"versiondb is ahead of commit multi store, resetting versiondb to match",
 				"versiondb_version", qmsVersion,

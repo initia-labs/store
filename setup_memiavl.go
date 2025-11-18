@@ -47,6 +47,7 @@ func SetupMemIAVL(
 			opts.TriggerStateSyncExport = func(height int64) {
 				go bapp.SnapshotManager().SnapshotIfApplicable(height)
 			}
+
 			cms := rootmulti.NewStore(filepath.Join(getDBDir(appOpts), "memiavl.db"), logger, supportExportNonSnapshotVersion)
 			cms.SetMemIAVLOptions(opts)
 			bapp.SetCMS(cms)
