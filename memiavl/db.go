@@ -1154,6 +1154,8 @@ func ClearSnapshotsBefore(dir string, height uint64) error {
 			if err := atomicRemoveDir(filepath.Join(dir, name)); err != nil {
 				return false, err
 			}
+
+			return false, nil
 		}
 
 		return true, nil
