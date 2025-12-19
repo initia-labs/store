@@ -407,6 +407,12 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 	return nil
 }
 
+// reloadQueryCache loads the historical query cache db when snapshot is triggered.
+func (rs *Store) reloadQueryCache(trees []memiavl.NamedTree, latestVersion int64) {
+	rs.queryCache.ReloadLatestVersion(trees, latestVersion)
+	go rs.loadQueryCache(latestVersion)
+}
+
 // loadQueryCache loads the historical query cache db in background.
 func (rs *Store) loadQueryCache(latestVersion int64) {
 	opts := rs.opts
@@ -445,9 +451,6 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 		return
 	}
 
-	// set query cache seed info for future pruning
-	rs.queryCache.SetSeedInfo(db, wal, latestVersion)
-
 	// add the initial historical version into query cache
 	rs.queryCache.AddHistoricalVersion(db, int64(startVersion))
 
@@ -459,6 +462,9 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 		}
 		rs.queryCache.AddHistoricalVersion(db, int64(h))
 	}
+
+	// set query cache seed info for future pruning
+	rs.queryCache.SetSeedInfo(db, wal, latestVersion)
 
 	rs.logger.Info("finished loading memiavl query cache", "from", startVersion, "to", latestVersion)
 }
@@ -535,6 +541,9 @@ func (rs *Store) SetMemIAVLOptions(opts memiavl.Options) {
 		opts.Logger = memiavl.Logger(rs.logger.With("module", "memiavl"))
 	}
 	clampHistoricalCacheOptions(&opts)
+	opts.TriggerReloadQueryCache = func(trees []memiavl.NamedTree, height int64) {
+		rs.reloadQueryCache(trees, height)
+	}
 	rs.opts = opts
 }
 

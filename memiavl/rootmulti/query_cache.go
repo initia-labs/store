@@ -36,9 +36,8 @@ func newQueryDBCache(store *Store) *queryDBCache {
 	return cache
 }
 
-func (c *queryDBCache) Reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// reset clears the cache without acquiring the lock.
+func (c *queryDBCache) reset() {
 	c.entries = make(map[int64]*cachedTrees)
 	c.seq = c.seq[:0]
 	if c.seedDB != nil {
@@ -49,6 +48,14 @@ func (c *queryDBCache) Reset() {
 		_ = c.seedWal.Close()
 		c.seedWal = nil
 	}
+}
+
+// Reset clears the cache and closes any open resources.
+func (c *queryDBCache) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.reset()
 }
 
 func (c *queryDBCache) Close() {
@@ -84,6 +91,32 @@ func (c *queryDBCache) AddHistoricalVersion(db *memiavl.DB, version int64) {
 	}
 
 	c.entries[version] = &cachedTrees{trees: trees}
+	c.insertVersion(version)
+	c.pruneHistoricalTrees()
+}
+
+// ReloadLatestVersion resets whole cache and adds the latest version to cache.
+func (c *queryDBCache) ReloadLatestVersion(trees []memiavl.NamedTree, version int64) {
+	if version <= 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// reset existing cache
+	c.reset()
+
+	if _, exists := c.entries[version]; exists {
+		return
+	}
+
+	treeMap := make(map[string]*memiavl.Tree)
+	for _, entry := range trees {
+		treeMap[entry.Name] = entry.Tree.Copy(0)
+	}
+
+	c.entries[version] = &cachedTrees{trees: treeMap}
 	c.insertVersion(version)
 	c.pruneHistoricalTrees()
 }
