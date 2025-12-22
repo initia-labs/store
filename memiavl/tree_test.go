@@ -260,6 +260,30 @@ func TestTreeCopy(t *testing.T) {
 	require.Equal(t, []byte("world2"), fakeSnapshot.Get([]byte("hello")))
 }
 
+func TestTreeCopyKeepsSnapshotOpen(t *testing.T) {
+	tree := New(0)
+	tree.ApplyChangeSet(ChangeSet{Pairs: []*KVPair{
+		{Key: []byte("hello"), Value: []byte("world")},
+	}})
+	_, _, err := tree.SaveVersion(true)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	require.NoError(t, tree.WriteSnapshot(dir))
+
+	snapshot, err := OpenSnapshot(dir)
+	require.NoError(t, err)
+
+	original := NewFromSnapshot(snapshot, true, 0)
+	cloned := original.Copy(0)
+
+	require.NoError(t, original.Close())
+	require.Equal(t, []byte("world"), cloned.Get([]byte("hello")))
+
+	require.NoError(t, cloned.Close())
+	require.Zero(t, snapshot.refCount.Load())
+}
+
 func TestChangeSetMarshal(t *testing.T) {
 	for _, changes := range ChangeSets {
 		bz, err := changes.Marshal()

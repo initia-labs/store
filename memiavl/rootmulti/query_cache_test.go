@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/wal"
 
 	"github.com/initia-labs/store/memiavl"
 )
@@ -31,10 +30,9 @@ func TestQueryCacheGetHistoricalTrees(t *testing.T) {
 
 	commitValue(t, store, key, "foo", "bar")
 
-	trees, ok := store.queryCache.GetHistoricalTrees(1)
+	mt, ok := store.queryCache.GetHistoricalTrees(1)
 	require.True(t, ok)
-	require.Contains(t, trees, key.Name())
-	require.NotNil(t, trees[key.Name()])
+	require.NotNil(t, mt.TreeByName(key.Name()))
 }
 
 func TestQueryCacheReset(t *testing.T) {
@@ -63,36 +61,6 @@ func TestQueryCacheRespectsConfiguredLimit(t *testing.T) {
 	_, hasLatest := store.queryCache.entries[4]
 	require.False(t, hasOld)
 	require.True(t, hasLatest)
-}
-
-func TestQueryCachePrunesSeedDBWhenClearingHistoricalEntries(t *testing.T) {
-	store, key := newTestStore(t, 2)
-	defer store.Close()
-
-	for i := range 3 {
-		commitValue(t, store, key, fmt.Sprintf("prune-%d", i), fmt.Sprintf("v%d", i))
-	}
-
-	cache := store.queryCache
-	opts := store.opts
-	opts.ReadOnly = true
-	seedDB, err := memiavl.Load(store.dir, opts)
-	require.NoError(t, err)
-
-	cache.SetSeedInfo(seedDB, &wal.Log{}, 3)
-	require.NotNil(t, cache.seedDB)
-
-	commitValue(t, store, key, "prune-2", "v2")
-	require.NotNil(t, cache.seedDB, "seed db should remain until clear height is pruned")
-	require.NotNil(t, cache.seedWal, "seed wal should remain until clear height is pruned")
-
-	commitValue(t, store, key, "prune-3", "v3")
-	require.NotNil(t, cache.seedDB, "seed db should remain until clear height is pruned")
-	require.NotNil(t, cache.seedWal, "seed wal should remain until clear height is pruned")
-
-	commitValue(t, store, key, "prune-4", "v4")
-	require.Nil(t, cache.seedDB, "seed db should be cleared once version >= clear height is pruned")
-	require.Nil(t, cache.seedWal, "seed wal should be cleared once version >= clear height is pruned")
 }
 
 func TestQueryCachePruningAfterLoadKeepsNewestVersions(t *testing.T) {

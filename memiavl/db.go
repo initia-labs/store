@@ -775,6 +775,7 @@ func (db *DB) rewriteSnapshotBackground() error {
 	wal := db.wal
 	go func() {
 		defer close(ch)
+		defer cloned.MultiTree.Close()
 
 		cloned.logger.Info("start rewriting snapshot", "version", cloned.Version())
 		if err := cloned.RewriteSnapshotWithContext(ctx); err != nil {

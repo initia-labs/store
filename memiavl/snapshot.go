@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 )
 
 const (
@@ -33,6 +34,9 @@ const (
 // Snapshot manage the lifecycle of mmap-ed files for the snapshot,
 // it must out live the objects that derived from it.
 type Snapshot struct {
+	// refCount tracks how many trees share this snapshot; starts at 1 from OpenSnapshot.
+	refCount atomic.Int32
+
 	nodesMap  *MmapFile
 	leavesMap *MmapFile
 	kvsMap    *MmapFile
@@ -165,11 +169,26 @@ func OpenSnapshot(snapshotDir string) (snapshot *Snapshot, err error) {
 		}
 	}
 
+	snapshot.refCount.Store(1)
 	return snapshot, nil
+}
+
+func (snapshot *Snapshot) retain() {
+	if snapshot != nil {
+		snapshot.refCount.Add(1)
+	}
 }
 
 // Close closes the file and mmap handles, clears the buffers.
 func (snapshot *Snapshot) Close() error {
+	if snapshot == nil {
+		return nil
+	}
+
+	if snapshot.refCount.Add(-1) > 0 {
+		return nil
+	}
+
 	var errs []error
 
 	if snapshot.nodesMap != nil {

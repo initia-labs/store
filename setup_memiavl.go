@@ -17,7 +17,10 @@ import (
 )
 
 // SetupMemIAVL insert the memiavl setter in front of baseapp options, so that
-// the default rootmulti store is replaced by memiavl store,
+// the default rootmulti store is replaced by memiavl store.
+//
+// CONTRACT: whenever the app creates a query context with CacheMultiStoreWithVersion,
+// it must call cacheMultiStore.Close() afterward to avoid resource leaks.
 func SetupMemIAVL(
 	logger log.Logger,
 	appOpts servertypes.AppOptions,
@@ -45,7 +48,7 @@ func SetupMemIAVL(
 		baseAppOptions = append([]func(*baseapp.BaseApp){func(bapp *baseapp.BaseApp) {
 			// trigger state-sync snapshot creation by memiavl
 			opts.TriggerStateSyncExport = func(height int64) {
-				go bapp.SnapshotManager().SnapshotIfApplicable(height)
+				bapp.SnapshotManager().SnapshotIfApplicable(height)
 			}
 
 			cms := rootmulti.NewStore(filepath.Join(getDBDir(appOpts), "memiavl.db"), logger, supportExportNonSnapshotVersion)

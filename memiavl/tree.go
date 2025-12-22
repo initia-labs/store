@@ -120,6 +120,9 @@ func (t *Tree) Copy(cacheSize int) *Tree {
 	newTree := *t
 	// cache is not copied along because it's not thread-safe to access
 	newTree.cache = NewCache(cacheSize)
+	if newTree.snapshot != nil {
+		newTree.snapshot.retain()
+	}
 	return &newTree
 }
 
