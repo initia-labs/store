@@ -33,6 +33,7 @@ func TestCacheMultiStoreWithVersionServesCachedVersions(t *testing.T) {
 
 	value := cms.GetKVStore(key).Get([]byte(targetKey))
 	require.Equal(t, []byte("v1"), value)
+	closeCacheMultiStore(t, cms)
 }
 
 func TestCacheMultiStoreWithVersionReturnsErrorWhenPruned(t *testing.T) {
@@ -85,10 +86,8 @@ func TestLoadQueryCachePopulatesHistoricalWindow(t *testing.T) {
 		require.NoError(t, err)
 		value := cms.GetKVStore(key).Get([]byte("foo"))
 		require.Equal(t, []byte(fmt.Sprintf("v%d", h-1)), value)
+		closeCacheMultiStore(t, cms)
 	}
-
-	require.NotNil(t, store.queryCache.seedDB)
-	require.Equal(t, latest, store.queryCache.seedClearHeight)
 }
 
 func newTestStore(t *testing.T, snapshotInterval uint32, customizers ...func(*memiavl.Options)) (*Store, types.StoreKey) {
@@ -116,4 +115,12 @@ func commitValue(t *testing.T, store *Store, key types.StoreKey, stateKey, value
 	kv := store.GetCommitKVStore(key)
 	kv.Set([]byte(stateKey), []byte(value))
 	store.Commit()
+}
+
+func closeCacheMultiStore(t *testing.T, cms types.CacheMultiStore) {
+	t.Helper()
+
+	if closer, ok := cms.(interface{ Close() error }); ok {
+		require.NoError(t, closer.Close())
+	}
 }

@@ -5,49 +5,52 @@ import (
 	"sync"
 
 	"github.com/initia-labs/store/memiavl"
-	"github.com/tidwall/wal"
 )
 
-type cachedTrees struct {
-	trees map[string]*memiavl.Tree
-}
-
 type queryDBCache struct {
-	store   *Store
+	store *Store
+
 	mu      sync.Mutex
-	entries map[int64]*cachedTrees
+	entries map[int64]*memiavl.MultiTree
 	seq     []int64
+
+	// the trees used for (cosmos-sdk) snapshots
+	snapshots map[int64]*memiavl.MultiTree
 
 	stop chan struct{}
 	once sync.Once
-
-	// seedDB tracks the initial memiavl.DB used to seed the query cache.
-	seedDB          *memiavl.DB
-	seedWal         *wal.Log
-	seedClearHeight int64
 }
 
 func newQueryDBCache(store *Store) *queryDBCache {
 	cache := &queryDBCache{
 		store:   store,
-		entries: make(map[int64]*cachedTrees),
+		entries: make(map[int64]*memiavl.MultiTree),
 		stop:    make(chan struct{}),
+
+		snapshots: make(map[int64]*memiavl.MultiTree),
 	}
 	return cache
 }
 
 // reset clears the cache without acquiring the lock.
 func (c *queryDBCache) reset() {
-	c.entries = make(map[int64]*cachedTrees)
+
+	// close all MultiTrees
+	for _, mt := range c.entries {
+		if err := mt.Close(); err != nil {
+			c.store.logger.Error("failed to close historical MultiTree", "error", err)
+		}
+	}
+
+	for _, mt := range c.snapshots {
+		if err := mt.Close(); err != nil {
+			c.store.logger.Error("failed to close snapshot MultiTree", "error", err)
+		}
+	}
+
+	c.entries = make(map[int64]*memiavl.MultiTree)
+	c.snapshots = make(map[int64]*memiavl.MultiTree)
 	c.seq = c.seq[:0]
-	if c.seedDB != nil {
-		_ = c.seedDB.Close()
-		c.seedDB = nil
-	}
-	if c.seedWal != nil {
-		_ = c.seedWal.Close()
-		c.seedWal = nil
-	}
 }
 
 // Reset clears the cache and closes any open resources.
@@ -63,14 +66,20 @@ func (c *queryDBCache) Close() {
 	c.Reset()
 }
 
-func (c *queryDBCache) GetHistoricalTrees(version int64) (map[string]*memiavl.Tree, bool) {
+// GetHistoricalTrees returns the MultiTree at the given version if it exists in the cache.
+// It first checks the entries map, then the snapshots map.
+func (c *queryDBCache) GetHistoricalTrees(version int64) (*memiavl.MultiTree, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	entry, ok := c.entries[version]
-	if !ok {
+
+	if entry, ok := c.entries[version]; !ok {
+		if mtree, ok := c.snapshots[version]; ok {
+			return mtree, true
+		}
 		return nil, false
+	} else {
+		return entry, true
 	}
-	return entry.trees, true
 }
 
 func (c *queryDBCache) AddHistoricalVersion(db *memiavl.DB, version int64) {
@@ -85,40 +94,39 @@ func (c *queryDBCache) AddHistoricalVersion(db *memiavl.DB, version int64) {
 		return
 	}
 
-	trees := make(map[string]*memiavl.Tree)
-	for _, entry := range db.Trees() {
-		trees[entry.Name] = entry.Tree.Copy(0)
-	}
-
-	c.entries[version] = &cachedTrees{trees: trees}
+	c.entries[version] = db.MultiTree.Copy(0)
 	c.insertVersion(version)
 	c.pruneHistoricalTrees()
 }
 
-// ReloadLatestVersion resets whole cache and adds the latest version to cache.
-func (c *queryDBCache) ReloadLatestVersion(trees []memiavl.NamedTree, version int64) {
-	if version <= 0 {
+// AddSnapshotVersion adds the snapshot MultiTree at the given version.
+func (c *queryDBCache) AddSnapshotVersion(mtree *memiavl.MultiTree, version int64) {
+	if mtree == nil || version <= 0 {
 		return
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// reset existing cache
-	c.reset()
-
-	if _, exists := c.entries[version]; exists {
+	if _, exists := c.snapshots[version]; exists {
 		return
 	}
 
-	treeMap := make(map[string]*memiavl.Tree)
-	for _, entry := range trees {
-		treeMap[entry.Name] = entry.Tree.Copy(0)
+	c.snapshots[version] = mtree
+}
+
+// RemoveSnapshotVersion closes and removes the snapshot MultiTree at the given version.
+func (c *queryDBCache) RemoveSnapshotVersion(version int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if mtree, exists := c.snapshots[version]; exists {
+		if mtree != nil {
+			_ = mtree.Close()
+		}
 	}
 
-	c.entries[version] = &cachedTrees{trees: treeMap}
-	c.insertVersion(version)
-	c.pruneHistoricalTrees()
+	delete(c.snapshots, version)
 }
 
 func (c *queryDBCache) insertVersion(version int64) {
@@ -155,20 +163,13 @@ func (c *queryDBCache) pruneHistoricalTrees() {
 	for len(c.seq) > limit {
 		version := c.seq[0]
 		c.seq = c.seq[1:]
-		delete(c.entries, version)
 
-		// clear seedDB if it's beyond the clear height
-		if version >= c.seedClearHeight {
-			if c.seedDB != nil {
-				_ = c.seedDB.Close()
-				c.seedDB = nil
-			}
-			if c.seedWal != nil {
-				_ = c.seedWal.Close()
-				c.seedWal = nil
-			}
+		mt := c.entries[version]
+		if err := mt.Close(); err != nil {
+			c.store.logger.Error("failed to close historical MultiTree", "version", version, "error", err)
 		}
 
+		delete(c.entries, version)
 	}
 }
 
@@ -189,12 +190,4 @@ func (c *queryDBCache) snapshotIntervalLimit() int {
 		limit = memiavl.DefaultSnapshotInterval
 	}
 	return limit
-}
-
-func (c *queryDBCache) SetSeedInfo(db *memiavl.DB, wal *wal.Log, height int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.seedDB = db
-	c.seedWal = wal
-	c.seedClearHeight = height
 }

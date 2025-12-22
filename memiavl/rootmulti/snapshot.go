@@ -12,20 +12,15 @@ import (
 )
 
 // Snapshot Implements interface Snapshotter
-func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) (returnErr error) {
-	if height > math.MaxInt64 {
-		return fmt.Errorf("height overflows int64: %d", height)
+func (rs *Store) Snapshot(version uint64, protoWriter protoio.Writer) (returnErr error) {
+	if version > math.MaxInt64 {
+		return fmt.Errorf("version overflows int64: %d", version)
 	}
 
-	version := uint64(height)
 	exporter, err := memiavl.NewMultiTreeExporter(rs.dir, version, rs.supportExportNonSnapshotVersion)
 	if err != nil {
 		return err
 	}
-
-	defer func() {
-		returnErr = errors.Join(returnErr, exporter.Close())
-	}()
 
 	for {
 		item, err := exporter.Next()
@@ -66,5 +61,18 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) (returnErr 
 		}
 	}
 
+	// close will be called `PruneSnapshotHeight`
+	rs.queryCache.AddSnapshotVersion(exporter.MultiTree(), int64(version))
+
 	return nil
+}
+
+// PruneSnapshotHeight closes and removes the snapshot MultiTree at the given height.
+func (rs *Store) PruneSnapshotHeight(height int64) {
+	rs.queryCache.RemoveSnapshotVersion(height)
+}
+
+// SetSnapshotInterval Implements interface Snapshotter
+// not needed, memiavl manage its own snapshot/pruning strategy
+func (rs *Store) SetSnapshotInterval(snapshotInterval uint64) {
 }

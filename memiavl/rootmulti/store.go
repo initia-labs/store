@@ -212,11 +212,12 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
 	}
 
-	historicalTrees, ok := rs.queryCache.GetHistoricalTrees(version)
+	mt, ok := rs.queryCache.GetHistoricalTrees(version)
 	if !ok {
 		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
 	}
 
+	cloned := mt.Copy(0)
 	stores := make(map[types.StoreKey]types.CacheWrapper)
 
 	// add the transient/mem stores registered in current app.
@@ -227,15 +228,16 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 	}
 
 	// add all the iavl stores at the target version.
-	for name, tree := range historicalTrees {
-		key, ok := rs.keysByName[name]
+	for _, nt := range cloned.Trees() {
+		key, ok := rs.keysByName[nt.Name]
 		if !ok {
-			return nil, fmt.Errorf("unknown store key: %s", name)
+			_ = cloned.Close()
+			return nil, fmt.Errorf("unknown store key: %s", nt.Name)
 		}
-		stores[key] = memiavl.NewStore(tree, rs.logger)
+		stores[key] = memiavl.NewStore(nt.Tree, rs.logger)
 	}
 
-	return cachemulti.NewStore(stores, nil, nil, nil), nil
+	return cachemulti.NewStore(stores, nil, nil, cloned), nil
 }
 
 // GetStore Implements interface MultiStore
@@ -274,16 +276,6 @@ func (rs *Store) SetTracingContext(types.TraceContext) types.MultiStore {
 // LatestVersion Implements interface MultiStore
 func (rs *Store) LatestVersion() int64 {
 	return rs.db.Version()
-}
-
-// PruneSnapshotHeight Implements interface Snapshotter
-// not needed, memiavl manage its own snapshot/pruning strategy
-func (rs *Store) PruneSnapshotHeight(height int64) {
-}
-
-// SetSnapshotInterval Implements interface Snapshotter
-// not needed, memiavl manage its own snapshot/pruning strategy
-func (rs *Store) SetSnapshotInterval(snapshotInterval uint64) {
 }
 
 // MountStoreWithDB Implements interface CommitMultiStore
@@ -407,12 +399,6 @@ func (rs *Store) LoadVersionAndUpgrade(version int64, upgrades *types.StoreUpgra
 	return nil
 }
 
-// reloadQueryCache loads the historical query cache db when snapshot is triggered.
-func (rs *Store) reloadQueryCache(trees []memiavl.NamedTree, latestVersion int64) {
-	rs.queryCache.ReloadLatestVersion(trees, latestVersion)
-	go rs.loadQueryCache(latestVersion)
-}
-
 // loadQueryCache loads the historical query cache db in background.
 func (rs *Store) loadQueryCache(latestVersion int64) {
 	opts := rs.opts
@@ -444,12 +430,13 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 		rs.logger.Error("failed to load memiavl for query cache", "error", err)
 		return
 	}
+	defer db.Close()
 	wal, err := memiavl.OpenWAL(filepath.Join(rs.dir, "wal"), &wal.Options{NoCopy: true, NoSync: true})
 	if err != nil {
-		_ = db.Close()
 		rs.logger.Error("failed to open memiavl wal for query cache", "error", err)
 		return
 	}
+	defer wal.Close()
 
 	// add the initial historical version into query cache
 	rs.queryCache.AddHistoricalVersion(db, int64(startVersion))
@@ -462,9 +449,6 @@ func (rs *Store) loadQueryCache(latestVersion int64) {
 		}
 		rs.queryCache.AddHistoricalVersion(db, int64(h))
 	}
-
-	// set query cache seed info for future pruning
-	rs.queryCache.SetSeedInfo(db, wal, latestVersion)
 
 	rs.logger.Info("finished loading memiavl query cache", "from", startVersion, "to", latestVersion)
 }
@@ -541,9 +525,6 @@ func (rs *Store) SetMemIAVLOptions(opts memiavl.Options) {
 		opts.Logger = memiavl.Logger(rs.logger.With("module", "memiavl"))
 	}
 	clampHistoricalCacheOptions(&opts)
-	opts.TriggerReloadQueryCache = func(trees []memiavl.NamedTree, height int64) {
-		rs.reloadQueryCache(trees, height)
-	}
 	rs.opts = opts
 }
 

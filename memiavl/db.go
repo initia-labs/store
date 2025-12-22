@@ -62,9 +62,6 @@ type DB struct {
 	pruneSnapshotLock      sync.Mutex
 	triggerStateSyncExport func(height int64)
 
-	// internal function to notify query cache to reload
-	triggerReloadQueryCache func(trees []NamedTree, height int64)
-
 	// invariant: the LastIndex always match the current version of MultiTree
 	wal         *wal.Log
 	walChanSize int
@@ -95,11 +92,10 @@ type Options struct {
 	InitialVersion  uint64
 	ReadOnly        bool
 	// the initial stores when initialize the empty instance
-	InitialStores           []string
-	SnapshotKeepRecent      uint32
-	SnapshotInterval        uint32
-	TriggerStateSyncExport  func(height int64)
-	TriggerReloadQueryCache func(trees []NamedTree, height int64)
+	InitialStores          []string
+	SnapshotKeepRecent     uint32
+	SnapshotInterval       uint32
+	TriggerStateSyncExport func(height int64)
 	// load the target version instead of latest version
 	TargetVersion uint64
 	// Buffer size for the asynchronous commit queue, -1 means synchronous commit,
@@ -253,18 +249,17 @@ func Load(dir string, opts Options) (*DB, error) {
 	workerPool := pond.New(opts.SnapshotWriterLimit, opts.SnapshotWriterLimit*10)
 
 	db := &DB{
-		MultiTree:               *mtree,
-		logger:                  opts.Logger,
-		dir:                     dir,
-		fileLock:                fileLock,
-		readOnly:                opts.ReadOnly,
-		wal:                     wal,
-		walChanSize:             opts.AsyncCommitBuffer,
-		snapshotKeepRecent:      opts.SnapshotKeepRecent,
-		snapshotInterval:        opts.SnapshotInterval,
-		triggerStateSyncExport:  opts.TriggerStateSyncExport,
-		triggerReloadQueryCache: opts.TriggerReloadQueryCache,
-		snapshotWriterPool:      workerPool,
+		MultiTree:              *mtree,
+		logger:                 opts.Logger,
+		dir:                    dir,
+		fileLock:               fileLock,
+		readOnly:               opts.ReadOnly,
+		wal:                    wal,
+		walChanSize:            opts.AsyncCommitBuffer,
+		snapshotKeepRecent:     opts.SnapshotKeepRecent,
+		snapshotInterval:       opts.SnapshotInterval,
+		triggerStateSyncExport: opts.TriggerStateSyncExport,
+		snapshotWriterPool:     workerPool,
 	}
 
 	if !db.readOnly && db.Version() == 0 && len(opts.InitialStores) > 0 {
@@ -491,11 +486,6 @@ func (db *DB) checkBackgroundSnapshotRewrite() error {
 			return fmt.Errorf("switch multitree failed: %w", err)
 		}
 		db.logger.Info("switched to new snapshot", "version", db.MultiTree.Version())
-
-		// trigger reload query cache
-		if db.triggerReloadQueryCache != nil {
-			db.triggerReloadQueryCache(db.MultiTree.Trees(), db.MultiTree.Version())
-		}
 
 		db.pruneSnapshots()
 
@@ -785,6 +775,7 @@ func (db *DB) rewriteSnapshotBackground() error {
 	wal := db.wal
 	go func() {
 		defer close(ch)
+		defer cloned.MultiTree.Close()
 
 		cloned.logger.Info("start rewriting snapshot", "version", cloned.Version())
 		if err := cloned.RewriteSnapshotWithContext(ctx); err != nil {

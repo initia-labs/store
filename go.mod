@@ -173,3 +173,5 @@ replace (
 	github.com/initia-labs/store/memiavl => ./memiavl
 	github.com/initia-labs/store/versiondb => ./versiondb
 )
+
+replace github.com/cosmos/cosmos-sdk => ../cosmos-sdk
