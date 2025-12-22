@@ -211,6 +211,10 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 
 	cloned, ok := rs.queryCache.GetHistoricalTrees(version)
 	if !ok {
+		if latestVersion-version >= int64(rs.queryCache.CacheLimit()) {
+			return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
+		}
+
 		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
 	}
 
@@ -620,6 +624,10 @@ func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 
 	cloned, ok := rs.queryCache.GetHistoricalTrees(version)
 	if !ok {
+		if latestVersion-version >= int64(rs.queryCache.CacheLimit()) {
+			return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
+		}
+
 		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
 	}
 
