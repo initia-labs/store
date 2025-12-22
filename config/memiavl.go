@@ -11,8 +11,8 @@ import (
 const (
 	DefaultMemIAVLCacheSize          = 1000
 	DefaultMemIAVLAsyncCommitBuffer  = 0
-	DefaultMemIAVLSnapshotKeepRecent = 1
-	DefaultHistoricalQueryLimit      = 0 // 0 means follow snapshot interval
+	DefaultMemIAVLSnapshotKeepRecent = 2
+	DefaultHistoricalQueryLimit      = 100
 )
 
 const (
