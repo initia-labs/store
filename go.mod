@@ -14,7 +14,7 @@ require (
 	github.com/cosmos/gogoproto v1.7.0
 	github.com/cosmos/iavl v1.2.6
 	github.com/golang/snappy v0.0.4
-	github.com/initia-labs/store/memiavl v0.1.0
+	github.com/initia-labs/store/memiavl v0.1.1
 	github.com/initia-labs/store/versiondb v0.1.0
 	github.com/linxGnu/grocksdb v1.10.3
 	github.com/spf13/cast v1.7.1

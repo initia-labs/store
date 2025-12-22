@@ -1,6 +1,7 @@
 package rootmulti
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 
@@ -14,8 +15,8 @@ type queryDBCache struct {
 	entries map[int64]*memiavl.MultiTree
 	seq     []int64
 
-	// the trees used for (cosmos-sdk) snapshots
-	snapshots map[int64]*memiavl.MultiTree
+	// the exporter used for (cosmos-sdk) snapshots
+	exporter *snapshotExporter
 
 	stop chan struct{}
 	once sync.Once
@@ -26,8 +27,6 @@ func newQueryDBCache(store *Store) *queryDBCache {
 		store:   store,
 		entries: make(map[int64]*memiavl.MultiTree),
 		stop:    make(chan struct{}),
-
-		snapshots: make(map[int64]*memiavl.MultiTree),
 	}
 	return cache
 }
@@ -42,14 +41,14 @@ func (c *queryDBCache) reset() {
 		}
 	}
 
-	for _, mt := range c.snapshots {
-		if err := mt.Close(); err != nil {
+	if c.exporter != nil {
+		if err := c.exporter.Close(); err != nil {
 			c.store.logger.Error("failed to close snapshot MultiTree", "error", err)
 		}
 	}
 
 	c.entries = make(map[int64]*memiavl.MultiTree)
-	c.snapshots = make(map[int64]*memiavl.MultiTree)
+	c.exporter = nil
 	c.seq = c.seq[:0]
 }
 
@@ -66,19 +65,19 @@ func (c *queryDBCache) Close() {
 	c.Reset()
 }
 
-// GetHistoricalTrees returns the MultiTree at the given version if it exists in the cache.
+// GetHistoricalTrees returns the cloned MultiTree at the given version if it exists in the cache.
 // It first checks the entries map, then the snapshots map.
 func (c *queryDBCache) GetHistoricalTrees(version int64) (*memiavl.MultiTree, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if entry, ok := c.entries[version]; !ok {
-		if mtree, ok := c.snapshots[version]; ok {
-			return mtree, true
+		if c.exporter != nil && c.exporter.version == version {
+			return c.exporter.mtree.Copy(0), true
 		}
 		return nil, false
 	} else {
-		return entry, true
+		return entry.Copy(0), true
 	}
 }
 
@@ -99,37 +98,40 @@ func (c *queryDBCache) AddHistoricalVersion(db *memiavl.DB, version int64) {
 	c.pruneHistoricalTrees()
 }
 
-// AddSnapshotVersion adds the snapshot MultiTree at the given version.
-func (c *queryDBCache) AddSnapshotVersion(mtree *memiavl.MultiTree, version int64) {
+// SetSnapshotExporter adds the snapshot MultiTree at the given version.
+func (c *queryDBCache) SetSnapshotExporter(version int64, mtree *memiavl.MultiTree, fl memiavl.FileLock) error {
 	if mtree == nil || version <= 0 {
-		return
+		return fmt.Errorf("invalid snapshot MultiTree or version")
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, exists := c.snapshots[version]; exists {
-		return
+	if c.exporter != nil {
+		return fmt.Errorf("snapshot exporter already exists")
 	}
 
-	c.snapshots[version] = mtree
+	c.exporter = &snapshotExporter{
+		version: version,
+		mtree:   mtree,
+		fl:      fl,
+	}
+
+	return nil
 }
 
-// RemoveSnapshotVersion closes and removes the snapshot MultiTree at the given version.
-func (c *queryDBCache) RemoveSnapshotVersion(version int64) {
+// PurgeSnapshotExporter closes and removes the snapshot MultiTree at the given version.
+func (c *queryDBCache) PurgeSnapshotExporter(height int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if mtree, exists := c.snapshots[version]; exists {
-		if mtree != nil {
-			err := mtree.Close()
-			if err != nil {
-				c.store.logger.Error("failed to close snapshot MultiTree", "version", version, "error", err)
-			}
+	if c.exporter != nil && c.exporter.version == height {
+		if err := c.exporter.Close(); err != nil {
+			c.store.logger.Error("failed to close snapshot MultiTree", "version", c.exporter.version, "error", err)
 		}
-	}
 
-	delete(c.snapshots, version)
+		c.exporter = nil
+	}
 }
 
 func (c *queryDBCache) insertVersion(version int64) {
