@@ -639,6 +639,11 @@ func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 		return nil, err
 	}
 
+	tree := cloned.TreeByName(storeName)
+	if tree == nil {
+		return nil, sdkerrors.ErrUnknownRequest.Wrapf("store %s not found", storeName)
+	}
+
 	store := types.Queryable(memiavl.NewStore(cloned.TreeByName(storeName), rs.logger))
 
 	// trim the path and make the query

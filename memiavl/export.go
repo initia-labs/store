@@ -64,6 +64,9 @@ func NewMultiTreeExporter(dir string, version uint64, supportExportNonSnapshotVe
 }
 
 func (mte *MultiTreeExporter) MultiTree() *MultiTree {
+	if mte.db != nil {
+		return &mte.db.MultiTree
+	}
 	return mte.mtree
 }
 
