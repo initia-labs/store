@@ -22,6 +22,8 @@ func (rs *Store) Snapshot(version uint64, protoWriter protoio.Writer) (returnErr
 		return err
 	}
 
+	defer exporter.Close()
+
 	for {
 		item, err := exporter.Next()
 		if err != nil {
@@ -62,7 +64,7 @@ func (rs *Store) Snapshot(version uint64, protoWriter protoio.Writer) (returnErr
 	}
 
 	// close will be called `PruneSnapshotHeight`
-	rs.queryCache.AddSnapshotVersion(exporter.MultiTree(), int64(version))
+	rs.queryCache.AddSnapshotVersion(exporter.MultiTree().Copy(0), int64(version))
 
 	return nil
 }

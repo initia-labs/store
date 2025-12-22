@@ -122,7 +122,10 @@ func (c *queryDBCache) RemoveSnapshotVersion(version int64) {
 
 	if mtree, exists := c.snapshots[version]; exists {
 		if mtree != nil {
-			_ = mtree.Close()
+			err := mtree.Close()
+			if err != nil {
+				c.store.logger.Error("failed to close snapshot MultiTree", "version", version, "error", err)
+			}
 		}
 	}
 
