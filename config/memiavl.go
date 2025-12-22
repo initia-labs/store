@@ -81,7 +81,7 @@ func GetMemIAVLConfig(appOpts servertypes.AppOptions) MemIAVLConfig {
 // AddConfigFlags implements servertypes.EVMConfigFlags interface.
 func AddMemIAVLConfigFlags(startCmd *cobra.Command) {
 	startCmd.Flags().Bool(flagMemIAVLEnable, false, "Enable memiavl store as the commit multi-store")
-	startCmd.Flags().Int(flagMemIAVLAsyncCommitBuffer, DefaultMemIAVLAsyncCommitBuffer, "Maximum simulation gas amount for evm contract execution")
+	startCmd.Flags().Int(flagMemIAVLAsyncCommitBuffer, DefaultMemIAVLAsyncCommitBuffer, "Size of the asynchronous commit buffer for memiavl store, -1 means synchronous commit")
 	startCmd.Flags().Bool(flagMemIAVLZeroCopy, false, "Enable zero-copy mode for memiavl store")
 	startCmd.Flags().Uint32(flagMemIAVLSnapshotKeepRecent, DefaultMemIAVLSnapshotKeepRecent, "Number of recent memiavl snapshots to keep")
 	startCmd.Flags().Uint32(flagMemIAVLSnapshotInterval, memiavl.DefaultSnapshotInterval, "Block interval the memiavl snapshot is taken")
