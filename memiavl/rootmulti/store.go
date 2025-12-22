@@ -208,16 +208,12 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 	if version <= 0 {
 		version = latestVersion
 	}
-	if latestVersion-version >= int64(rs.queryCache.CacheLimit()) {
-		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
-	}
 
-	mt, ok := rs.queryCache.GetHistoricalTrees(version)
+	cloned, ok := rs.queryCache.GetHistoricalTrees(version)
 	if !ok {
 		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
 	}
 
-	cloned := mt.Copy(0)
 	stores := make(map[types.StoreKey]types.CacheWrapper)
 
 	// add the transient/mem stores registered in current app.
@@ -614,22 +610,20 @@ func (rs *Store) GetStoreByName(name string) types.Store {
 // Query Implements interface Queryable
 func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 	version := req.Height
+	latestVersion := rs.LatestVersion()
+	if version > latestVersion {
+		return nil, sdkerrors.ErrInvalidHeight.Wrapf("requested version %d is greater than latest version %d", version, latestVersion)
+	}
 	if version <= 0 {
 		version = rs.db.Version()
 	}
 
-	// If the request's height is the latest height we've committed, then utilize
-	// the store's lastCommitInfo as this commit info may not be flushed to disk.
-	// Otherwise, we query for the commit info from disk.
-	db := rs.db
-	if version != rs.lastCommitInfo.Version {
-		var err error
-		db, err = memiavl.Load(rs.dir, memiavl.Options{TargetVersion: uint64(version), ReadOnly: true})
-		if err != nil {
-			return nil, err
-		}
-		defer db.Close()
+	cloned, ok := rs.queryCache.GetHistoricalTrees(version)
+	if !ok {
+		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
 	}
+
+	defer cloned.Close()
 
 	path := req.Path
 	storeName, subpath, err := parsePath(path)
@@ -637,7 +631,7 @@ func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 		return nil, err
 	}
 
-	store := types.Queryable(memiavl.NewStore(db.TreeByName(storeName), rs.logger))
+	store := types.Queryable(memiavl.NewStore(cloned.TreeByName(storeName), rs.logger))
 
 	// trim the path and make the query
 	req.Path = subpath
@@ -654,7 +648,7 @@ func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 		return nil, errors.Wrap(sdkerrors.ErrInvalidRequest, "proof is unexpectedly empty; ensure height has not been pruned")
 	}
 
-	commitInfo := convertCommitInfo(db.LastCommitInfo())
+	commitInfo := convertCommitInfo(cloned.LastCommitInfo())
 
 	// Restore origin path and append proof op.
 	res.ProofOps.Ops = append(res.ProofOps.Ops, commitInfo.ProofOp(storeName))

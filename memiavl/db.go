@@ -283,7 +283,7 @@ func removeTmpDirs(rootDir string) error {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasSuffix(entry.Name(), TmpSuffix) {
+		if !strings.HasSuffix(entry.Name(), TmpSuffix) {
 			continue
 		}
 
@@ -514,7 +514,15 @@ func (db *DB) pruneSnapshots() {
 		}
 
 		counter := db.snapshotKeepRecent
+		earliestVersion := int64(0)
 		if err := traverseSnapshots(db.dir, false, func(version int64) (bool, error) {
+			keep := true
+			defer func() {
+				if keep && (earliestVersion == 0 || version < earliestVersion) {
+					earliestVersion = version
+				}
+			}()
+
 			if version >= currentVersion {
 				// ignore any newer snapshot directories, there could be ongoning snapshot rewrite.
 				return false, nil
@@ -524,6 +532,16 @@ func (db *DB) pruneSnapshots() {
 				counter--
 				return false, nil
 			}
+
+			// prune this snapshot
+			keep = false
+
+			// try to acquire exporter filelock before pruning to check if it's being used for cosmos snapshot export
+			fl, err := AcquireExporterLock(db.dir, version)
+			if err != nil {
+				return false, nil
+			}
+			defer fl.Destroy()
 
 			name := snapshotName(version)
 			db.logger.Info("prune snapshot", "name", name)
@@ -537,13 +555,15 @@ func (db *DB) pruneSnapshots() {
 			db.logger.Error("fail to prune snapshots", "err", err)
 			return
 		}
-
-		// truncate WAL until the earliest remaining snapshot
-		earliestVersion, err := firstSnapshotVersion(db.dir)
-		if err != nil {
-			db.logger.Error("failed to find first snapshot", "err", err)
+		if earliestVersion == 0 {
+			earliestVersion, err = firstSnapshotVersion(db.dir)
+			if err != nil {
+				db.logger.Error("failed to find first snapshot", "err", err)
+				return
+			}
 		}
 
+		// truncate WAL until the earliest remaining snapshot
 		if err := db.wal.TruncateFront(walIndex(earliestVersion+1, db.initialVersion)); err != nil {
 			db.logger.Error("failed to truncate wal", "err", err, "version", earliestVersion+1)
 		}
