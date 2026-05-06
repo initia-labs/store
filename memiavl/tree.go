@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/cosmos/iavl/cache"
 )
@@ -26,7 +27,8 @@ type Tree struct {
 	snapshot *Snapshot
 
 	// simple lru cache provided by iavl library
-	cache cache.Cache
+	cache   cache.Cache
+	cacheMu *sync.Mutex
 
 	// when true, the get and iterator methods could return a slice pointing to mmaped blob files.
 	zeroCopy bool
@@ -47,6 +49,7 @@ func NewEmptyTree(version uint64, cacheSize int) *Tree {
 		// no need to copy if the tree is not backed by snapshot
 		zeroCopy: true,
 		cache:    NewCache(cacheSize),
+		cacheMu:  &sync.Mutex{},
 	}
 }
 
@@ -71,6 +74,7 @@ func NewFromSnapshot(snapshot *Snapshot, zeroCopy bool, cacheSize int) *Tree {
 		snapshot: snapshot,
 		zeroCopy: zeroCopy,
 		cache:    NewCache(cacheSize),
+		cacheMu:  &sync.Mutex{},
 	}
 
 	if !snapshot.IsEmpty() {
@@ -117,13 +121,20 @@ func (t *Tree) Copy(cacheSize int) *Tree {
 		// protect the existing `MemNode`s from get modified in-place
 		t.cowVersion = t.version
 	}
-	newTree := *t
-	// cache is not copied along because it's not thread-safe to access
-	newTree.cache = NewCache(cacheSize)
+	newTree := &Tree{
+		version:    t.version,
+		cowVersion: t.cowVersion,
+		root:       t.root,
+		snapshot:   t.snapshot,
+		// cache is not copied along because it's not safe to share mutable LRU state.
+		cache:    NewCache(cacheSize),
+		cacheMu:  &sync.Mutex{},
+		zeroCopy: t.zeroCopy,
+	}
 	if newTree.snapshot != nil {
 		newTree.snapshot.retain()
 	}
-	return &newTree
+	return newTree
 }
 
 // ApplyChangeSet apply the change set of a whole version, and update hashes.
@@ -144,14 +155,18 @@ func (t *Tree) set(key, value []byte) {
 	}
 	t.root, _ = setRecursive(t.root, key, value, t.version+1, t.cowVersion)
 	if t.cache != nil {
+		t.cacheMu.Lock()
 		t.cache.Add(&cacheNode{key, value})
+		t.cacheMu.Unlock()
 	}
 }
 
 func (t *Tree) remove(key []byte) {
 	_, t.root, _ = removeRecursive(t.root, key, t.version+1, t.cowVersion)
 	if t.cache != nil {
+		t.cacheMu.Lock()
 		t.cache.Remove(key)
+		t.cacheMu.Unlock()
 	}
 }
 
@@ -217,9 +232,12 @@ func (t *Tree) GetByIndex(index int64) ([]byte, []byte) {
 
 func (t *Tree) Get(key []byte) []byte {
 	if t.cache != nil {
+		t.cacheMu.Lock()
 		if node := t.cache.Get(key); node != nil {
+			t.cacheMu.Unlock()
 			return node.(*cacheNode).value
 		}
+		t.cacheMu.Unlock()
 	}
 
 	_, value := t.GetWithIndex(key)
@@ -228,7 +246,9 @@ func (t *Tree) Get(key []byte) []byte {
 	}
 
 	if t.cache != nil {
+		t.cacheMu.Lock()
 		t.cache.Add(&cacheNode{key, value})
+		t.cacheMu.Unlock()
 	}
 	return value
 }

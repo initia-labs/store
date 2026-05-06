@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 
 	db "github.com/cosmos/cosmos-db"
@@ -258,6 +259,46 @@ func TestTreeCopy(t *testing.T) {
 	// get modified in-place
 	require.Equal(t, []byte("world2"), tree.Get([]byte("hello")))
 	require.Equal(t, []byte("world2"), fakeSnapshot.Get([]byte("hello")))
+}
+
+func TestTreeGetCacheConcurrent(t *testing.T) {
+	tree := New(64)
+	pairs := make([]*KVPair, 256)
+	for i := range pairs {
+		pairs[i] = &KVPair{
+			Key:   []byte(fmt.Sprintf("key-%03d", i)),
+			Value: []byte(fmt.Sprintf("value-%03d", i)),
+		}
+	}
+	tree.ApplyChangeSet(ChangeSet{Pairs: pairs})
+	_, _, err := tree.SaveVersion(true)
+	require.NoError(t, err)
+
+	start := make(chan struct{})
+	errCh := make(chan string, 32)
+	var wg sync.WaitGroup
+	for g := 0; g < 32; g++ {
+		wg.Add(1)
+		go func(offset int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < 512; i++ {
+				idx := (offset + i) % len(pairs)
+				value := tree.Get(pairs[idx].Key)
+				if !bytes.Equal(value, pairs[idx].Value) {
+					errCh <- fmt.Sprintf("unexpected value for %s: %q", pairs[idx].Key, value)
+					return
+				}
+			}
+		}(g)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.Empty(t, err)
+	}
 }
 
 func TestTreeCopyKeepsSnapshotOpen(t *testing.T) {
