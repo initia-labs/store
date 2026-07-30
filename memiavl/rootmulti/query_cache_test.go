@@ -30,8 +30,9 @@ func TestQueryCacheGetHistoricalTrees(t *testing.T) {
 
 	commitValue(t, store, key, "foo", "bar")
 
-	mt, ok := store.queryCache.GetHistoricalTrees(1)
+	mt, latest, ok := store.queryCache.GetHistoricalTrees(1)
 	require.True(t, ok)
+	require.Equal(t, int64(1), latest)
 	require.NotNil(t, mt.TreeByName(key.Name()))
 }
 
