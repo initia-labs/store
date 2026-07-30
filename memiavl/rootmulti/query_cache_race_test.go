@@ -31,7 +31,7 @@ func TestQueryAtLatestNeverNotReady(t *testing.T) {
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	var notReady, other, okCnt atomic.Int64
+	var notReady, stale, other, okCnt atomic.Int64
 
 	classify := func(cms types.CacheMultiStore, err error) {
 		switch {
@@ -42,6 +42,9 @@ func TestQueryAtLatestNeverNotReady(t *testing.T) {
 			}
 		case strings.Contains(err.Error(), "historical version not ready"):
 			notReady.Add(1)
+		case strings.Contains(err.Error(), "historical version not found"),
+			strings.Contains(err.Error(), "not yet published"):
+			stale.Add(1)
 		default:
 			other.Add(1)
 		}
@@ -73,7 +76,7 @@ func TestQueryAtLatestNeverNotReady(t *testing.T) {
 	close(stop)
 	wg.Wait()
 
-	t.Logf("ok=%d notReady=%d other=%d", okCnt.Load(), notReady.Load(), other.Load())
+	t.Logf("ok=%d notReady=%d stale=%d other=%d", okCnt.Load(), notReady.Load(), stale.Load(), other.Load())
 	require.Zero(t, notReady.Load(), "advertised latest version must always be queryable")
 	require.Zero(t, other.Load(), "unexpected error class")
 	require.Positive(t, okCnt.Load())

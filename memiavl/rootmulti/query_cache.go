@@ -82,17 +82,20 @@ func (c *queryDBCache) Close() {
 
 // GetHistoricalTrees returns the cloned MultiTree at the given version if it exists in the cache.
 // It first checks the entries map, then the snapshots map.
-func (c *queryDBCache) GetHistoricalTrees(version int64) (*memiavl.MultiTree, bool) {
+// The cache's latest published version is returned alongside so that, on a miss,
+// callers can classify the failure (pruned vs not yet published) against the same
+// cache state the lookup saw, instead of the latest version read at a different time.
+func (c *queryDBCache) GetHistoricalTrees(version int64) (*memiavl.MultiTree, int64, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if entry, ok := c.entries[version]; !ok {
 		if c.exporter != nil && c.exporter.version == version {
-			return c.exporter.mtree.Copy(0), true
+			return c.exporter.mtree.Copy(0), c.latest, true
 		}
-		return nil, false
+		return nil, c.latest, false
 	} else {
-		return entry.Copy(0), true
+		return entry.Copy(0), c.latest, true
 	}
 }
 

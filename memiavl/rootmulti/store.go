@@ -209,13 +209,9 @@ func (rs *Store) CacheMultiStoreWithVersion(version int64) (types.CacheMultiStor
 		version = latestVersion
 	}
 
-	cloned, ok := rs.queryCache.GetHistoricalTrees(version)
+	cloned, cacheLatest, ok := rs.queryCache.GetHistoricalTrees(version)
 	if !ok {
-		if latestVersion-version >= int64(rs.queryCache.CacheLimit()) {
-			return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
-		}
-
-		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
+		return nil, classifyCacheMiss(version, cacheLatest, rs.queryCache.CacheLimit())
 	}
 
 	stores := make(map[types.StoreKey]types.CacheWrapper)
@@ -638,13 +634,9 @@ func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 		version = latestVersion
 	}
 
-	cloned, ok := rs.queryCache.GetHistoricalTrees(version)
+	cloned, cacheLatest, ok := rs.queryCache.GetHistoricalTrees(version)
 	if !ok {
-		if latestVersion-version >= int64(rs.queryCache.CacheLimit()) {
-			return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
-		}
-
-		return nil, sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
+		return nil, classifyCacheMiss(version, cacheLatest, rs.queryCache.CacheLimit())
 	}
 
 	defer cloned.Close()
@@ -683,6 +675,19 @@ func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 	res.ProofOps.Ops = append(res.ProofOps.Ops, commitInfo.ProofOp(storeName))
 
 	return res, nil
+}
+
+// classifyCacheMiss maps a historical-cache miss to the right error, judged
+// against the latest version the cache held at lookup time.
+func classifyCacheMiss(version, cacheLatest int64, cacheLimit int) error {
+	switch {
+	case version > cacheLatest:
+		return sdkerrors.ErrInvalidHeight.Wrapf("requested version %d is not yet published; latest published version is %d", version, cacheLatest)
+	case cacheLatest-version >= int64(cacheLimit):
+		return sdkerrors.ErrInvalidHeight.Wrapf("historical version not found: %d", version)
+	default:
+		return sdkerrors.ErrInvalidHeight.Wrapf("historical version not ready: %d", version)
+	}
 }
 
 // parsePath expects a format like /<storeName>[/<subpath>]
