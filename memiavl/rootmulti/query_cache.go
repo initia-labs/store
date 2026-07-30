@@ -15,6 +15,11 @@ type queryDBCache struct {
 	entries map[int64]*memiavl.MultiTree
 	seq     []int64
 
+	// latest is the highest version published into the cache. Query paths use
+	// this as the advertised latest version so a version is never reported as
+	// queryable before its cache entry exists (see Store.Commit ordering).
+	latest int64
+
 	// the exporter used for (cosmos-sdk) snapshots
 	exporter *snapshotExporter
 
@@ -50,6 +55,16 @@ func (c *queryDBCache) reset() {
 	c.entries = make(map[int64]*memiavl.MultiTree)
 	c.exporter = nil
 	c.seq = c.seq[:0]
+	c.latest = 0
+}
+
+// LatestVersion returns the highest version published into the cache,
+// or 0 if nothing has been published yet.
+func (c *queryDBCache) LatestVersion() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.latest
 }
 
 // Reset clears the cache and closes any open resources.
@@ -96,6 +111,10 @@ func (c *queryDBCache) AddHistoricalVersion(db *memiavl.DB, version int64) {
 	c.entries[version] = db.MultiTree.Copy(0)
 	c.insertVersion(version)
 	c.pruneHistoricalTrees()
+
+	if version > c.latest {
+		c.latest = version
+	}
 }
 
 // SetSnapshotExporter adds the snapshot MultiTree at the given version.

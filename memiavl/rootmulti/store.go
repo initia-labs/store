@@ -273,8 +273,16 @@ func (rs *Store) SetTracingContext(types.TraceContext) types.MultiStore {
 	return nil
 }
 
-// LatestVersion Implements interface MultiStore
+// LatestVersion Implements interface MultiStore. It returns the latest version
+// published into the historical query cache rather than the raw tree version.
+// During Commit the tree version advances before the cache entry for it is
+// published, and advertising the raw version in that window makes height-0
+// queries resolve to a height that cannot be served yet.
 func (rs *Store) LatestVersion() int64 {
+	if v := rs.queryCache.LatestVersion(); v > 0 {
+		return v
+	}
+
 	return rs.db.Version()
 }
 
@@ -546,6 +554,10 @@ func (rs *Store) RollbackToVersion(target int64) error {
 		return fmt.Errorf("invalid rollback height target: %d", target)
 	}
 
+	// drop cached historical trees as they may reference versions above the
+	// rollback target and would otherwise still be advertised and served
+	rs.queryCache.Reset()
+
 	if rs.db != nil {
 		if err := rs.db.Close(); err != nil {
 			return err
@@ -558,8 +570,12 @@ func (rs *Store) RollbackToVersion(target int64) error {
 
 	var err error
 	rs.db, err = memiavl.Load(rs.dir, opts)
+	if err != nil {
+		return err
+	}
 
-	return err
+	rs.queryCache.AddHistoricalVersion(rs.db, rs.db.Version())
+	return nil
 }
 
 // ListeningEnabled Implements interface CommitMultiStore
@@ -619,7 +635,7 @@ func (rs *Store) Query(req *types.RequestQuery) (*types.ResponseQuery, error) {
 		return nil, sdkerrors.ErrInvalidHeight.Wrapf("requested version %d is greater than latest version %d", version, latestVersion)
 	}
 	if version <= 0 {
-		version = rs.db.Version()
+		version = latestVersion
 	}
 
 	cloned, ok := rs.queryCache.GetHistoricalTrees(version)
